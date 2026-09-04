@@ -1,0 +1,154 @@
+{
+  "name": "lalog",
+  "displayName": "LaLog",
+  "description": "Local-first work session tracker with automatic event capture, human session descriptions, and optional opencode-powered AI assistance.",
+  "version": "0.2.0",
+  "publisher": "lawaty",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.93.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onDidChangeWorkspaceFolders"
+  ],
+  "main": "./dist/extension.js",
+  "extensionKind": [
+    "workspace"
+  ],
+  "contributes": {
+    "configuration": {
+      "title": "LaLog",
+      "properties": {
+        "lalog.dataDir": {
+          "type": "string",
+          "default": "~/.lalog",
+          "description": "Directory where LaLog stores its data. Tilde expands to home. Useful to point at a synced path for Remote-SSH setups."
+        },
+        "lalog.describeAfterMinutes": {
+          "type": "number",
+          "default": 90,
+          "description": "Active minutes after which LaLog prompts for a session description checkpoint."
+        },
+        "lalog.wrapAfterMinutes": {
+          "type": "number",
+          "default": 210,
+          "description": "Active minutes after which LaLog prompts to wrap the session (3.5h)."
+        },
+        "lalog.graceMinutes": {
+          "type": "number",
+          "default": 30,
+          "description": "Extension length when choosing 'Extend' on the wrap prompt."
+        },
+        "lalog.maxGraceExtensions": {
+          "type": "number",
+          "default": 3,
+          "description": "Max free 'Extend' choices before a description is required to continue."
+        },
+        "lalog.idleGapMinutes": {
+          "type": "number",
+          "default": 5,
+          "description": "Gap between events that still counts as continuous active work."
+        },
+        "lalog.autoEndAfterIdleMinutes": {
+          "type": "number",
+          "default": 120,
+          "description": "Idle time after which a session auto-closes (2h). Sessions are not day-bound; this is the only boundary."
+        },
+        "lalog.resumeWindowMinutes": {
+          "type": "number",
+          "default": 30,
+          "description": "Recovery: if last activity was within this window on restart, offer resume."
+        },
+        "lalog.debugTimeScale": {
+          "type": "number",
+          "default": 1,
+          "description": "Divide all time thresholds by this factor. Set 60 to test a '4-hour' session in 4 minutes."
+        },
+        "lalog.logTerminalCommands": {
+          "type": "boolean",
+          "default": true,
+          "description": "Record terminal commands (requires shell integration)."
+        },
+        "lalog.redactPatterns": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["TOKEN", "KEY", "SECRET", "PASSWORD", "PASS=", "API_KEY", "api[-_]?key"],
+          "description": "Regex patterns redacted from logged terminal commands."
+        },
+        "lalog.ai.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable optional AI assistance via the local opencode CLI. OFF by default — LaLog stays fully functional and local without it."
+        },
+        "lalog.ai.model": {
+          "type": "string",
+          "default": "opencode/big-pickle",
+          "description": "Model ID used for AI assistance. Pinned to opencode/big-pickle by default. Note: big-pickle is a cloud-hosted OpenCode Zen model, currently free for a limited time, during which collected data may be used to improve the model."
+        },
+        "lalog.ai.opencodePath": {
+          "type": "string",
+          "default": "opencode",
+          "description": "Path to the opencode CLI binary. Resolved from PATH if left as 'opencode'."
+        },
+        "lalog.ai.timeoutMs": {
+          "type": "number",
+          "default": 60000,
+          "description": "Timeout (ms) for a single AI request."
+        },
+        "lalog.ai.maxRetries": {
+          "type": "number",
+          "default": 2,
+          "description": "Retries on transient AI errors (rate limits, 5xx)."
+        },
+        "lalog.ai.data.sendCommitSubjects": {
+          "type": "boolean",
+          "default": true,
+          "description": "Send commit subjects (never diffs or bodies) to the AI. File paths and edit/save counters are always sent; file contents and terminal output are never sent."
+        }
+      }
+    },
+    "commands": [
+      { "command": "lalog.startSession", "title": "LaLog: Start session" },
+      { "command": "lalog.endSession", "title": "LaLog: End session" },
+      { "command": "lalog.describeNow", "title": "LaLog: Describe current session" },
+      { "command": "lalog.report", "title": "LaLog: Generate report" },
+      { "command": "lalog.analysis", "title": "LaLog: Analyze my work", "enablement": "config.lalog.ai.enabled" },
+      { "command": "lalog.showSessions", "title": "LaLog: Show sessions" },
+      { "command": "lalog.editSession", "title": "LaLog: Edit session" },
+      { "command": "lalog.exportFilesByDay", "title": "LaLog: Export files by day" }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        { "id": "lalog", "title": "LaLog", "icon": "resources/icon.svg" }
+      ]
+    },
+    "views": {
+      "lalog": [
+        { "id": "lalog.sessionsView", "name": "Sessions" }
+      ]
+    },
+    "menus": {
+      "view/item/context": [
+        { "command": "lalog.editSession", "when": "view == lalog.sessionsView", "group": "inline" }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "node esbuild.test.js && node --test \"dist-test/*.test.js\"",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.93.0",
+    "esbuild": "^0.20.2",
+    "typescript": "^5.4.5"
+  }
+}
