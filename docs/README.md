@@ -26,12 +26,12 @@ AI assistance is **optional and off by default**: when enabled, LaLog uses the l
 ## Quick Start
 
 1. Install the extension (or press F5 in VS Code to run from source)
-2. Open a workspace — LaLog activates on `onStartupFinished`
-3. You'll see a prompt: *"Work in \<workspace\>? Start a work session?"*
-4. Work normally — edits, saves, terminal commands are captured automatically
-5. After ~90 active minutes, a describe prompt appears at a natural breakpoint
-6. After ~3.5h, a wrap prompt offers to close the session or extend 30 min
-7. After ~2h idle, the session auto-closes (endedAt = lastActivityAt, not detection time)
+2. Open a workspace — LaLog activates on `onStartupFinished` and auto-starts tracking
+3. Work normally — edits, saves, terminal commands are captured automatically
+4. After ~90 active minutes, a describe prompt appears at a natural breakpoint
+5. After ~3.5h, a wrap prompt offers to close the session or extend 30 min
+6. After 15 min idle, LaLog asks "Are you still there?" — confirm to keep tracking
+7. After ~2h idle or closing VS Code, the session auto-closes (endedAt = lastActivityAt)
 
 ## Optional AI Assistance
 
@@ -62,7 +62,8 @@ Every AI output is labeled as AI-generated; nothing is silently persisted as gro
 
 - **Sessions are NOT day-bound** — an overnight coding thread is a single session
 - **The only boundary is ~2h idle** — auto-close uses `lastActivityAt`, never wall-clock
-- **Gap-based active time** — idle gaps (>5 min) are never counted as active
+- **Active-only time** — session duration is the sum of active timestamps, never `close − start`; idle gaps (>15 min) are never counted
+- **Idle confirmation** — after 15 min of no activity, LaLog asks if you're still working (e.g. outside VS Code) before letting the tracker go quiet
 - **Breakpoint-aligned prompts** — prompts deliver when a terminal command ends, not on a fixed timer
 - **Local-first / AI-optional / egress-explicit** — all data in `~/.lalog/`; AI off by default; exactly-what-is-sent is defined above
 - **JSONL append-only** — crash-safe, human-readable, grep-friendly
@@ -77,7 +78,8 @@ Core settings are under `lalog.*`. AI settings are under `lalog.ai.*`.
 | `lalog.describeAfterMinutes` | `90` | Active minutes before describe prompt |
 | `lalog.wrapAfterMinutes` | `210` | Active minutes before wrap prompt (3.5h) |
 | `lalog.graceMinutes` | `30` | Extension length on "Extend" choice |
-| `lalog.idleGapMinutes` | `5` | Gap between events that still counts as active |
+| `lalog.idleGapMinutes` | `15` | Gap between events that still counts as active |
+| `lalog.idleConfirmAfterMinutes` | `15` | Idle time before the "Are you still there?" check |
 | `lalog.autoEndAfterIdleMinutes` | `120` | Idle time before auto-close (2h) |
 | `lalog.debugTimeScale` | `1` | Divide all thresholds by this (set 60 to test 4h in 4 min) |
 | `lalog.ai.enabled` | `false` | Master switch for AI assistance (off by default) |

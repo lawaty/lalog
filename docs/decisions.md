@@ -19,6 +19,7 @@
 - [ADR-009: Heartbeat + Snapshot Persistence](#adr-009-heartbeat--snapshot-persistence)
 - [ADR-010: The Only Boundary Is ~2h Idle](#adr-010-the-only-boundary-is-2h-idle)
 - [ADR-011: Optional AI Assistance (amends ADR-005)](#adr-011-optional-ai-assistance-amends-adr-005)
+- [ADR-012: Active-Only Tracking with Idle Confirmation](#adr-012-active-only-tracking-with-idle-confirmation)
 
 ---
 
@@ -322,6 +323,31 @@ export function thresholdsMs(cfg: WorklogConfig): ThresholdsMs {
 - Tested end-to-end against the real `opencode` CLI with `opencode/big-pickle`.
 
 **Future**: The deliberately-deferred live "proactive suggestions" and managed `opencode serve` lifecycle are covered later and remain experimental (see roadmap).
+
+---
+
+## ADR-012: Active-Only Tracking with Idle Confirmation
+
+**Status**: Accepted
+
+**Context**: Session time must equal the user's real engagement, never `close_time − start_time` (a session left open over lunch would inflate hours). But "active" is ambiguous — a user can be engaged *outside* VS Code (reading docs, reviewing a branch) while idle in the editor. LaLog also previously stored `activeMinutes` in inconsistent units (accrued as milliseconds but consumed as minutes), inflating reported durations ~60000×.
+
+**Decision**:
+1. **Active-only time**: `Session.activeMinutes` is the sum of gap-based active runs (contiguous activity ≤ `idleGapMs` apart), stored as **milliseconds**.
+2. **Idle confirmation**: after `idleConfirmAfterMinutes` (15) of no VS Code activity, the heartbeat fires "Are you still there?". *Yes* keeps the current span open — the idle stretch is counted as active, but is **not** VS Code activity. *No* ends the session. This makes confirmed-outside work count while keeping it separable.
+3. **Untagged spans, classified at filter time**: `Session.activeSpans` store contiguous runs without a source tag. A span is *in VS Code* iff its `end` timestamp is present in `Session.activityTs` (outside spans end at a confirmation timestamp, never at a recorded activity). Legacy sessions without spans are reconstructed from `activityTs` gap analysis.
+
+**Rationale**:
+- Storing spans without source keeps persistence simple and append-only; classification happens only when a report is generated, so it can change without rewriting history.
+- Checking `end ∈ activityTs` is cheap and deterministic, and directly encodes "the last thing that happened during this run was VS Code activity".
+- Confirming idle as active acknowledges that "are you still working?" is the right human question and avoids the false negative of counting nothing.
+
+**Implementation**:
+- `src/core/spans.ts` (`updateActiveSpan`), `src/core/sessionManager.ts` (`accrueActivity`, `checkIdle`, `accrueOutsideConfirmed`, `closeOpenSpanAt`), `src/reporting/spans.ts` (`splitActiveMinutes`).
+- `Session.activityTs` capped at 20 000 entries to bound file size; older entries are dropped oldest-first (span classification then falls back to gap analysis for those spans individually).
+- Unit fix: `activeMinutes` is milliseconds end-to-end; all `* 60000` consumers (report, aggregate, sessions view, status bar, prompts, redact) corrected in the same change.
+
+**Test coverage**: `test/spans.test.ts` — span open/extend/close, in/outside classification, legacy reconstruction, confirmed-idle-outside, and a round-trip run.
 
 
 

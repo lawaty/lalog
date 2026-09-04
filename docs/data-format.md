@@ -54,7 +54,9 @@ interface Session {
   startedAt: number;             // Unix timestamp (ms)
   endedAt?: number;              // Unix timestamp (ms) — set when closed
   lastActivityAt: number;        // Unix timestamp (ms)
-  activeMinutes: number;         // Total active minutes (gap-based)
+  activeMinutes: number;         // Total active time (milliseconds, gap-based)
+  activeSpans: ActiveSpan[];     // Contiguous active periods (ms) — sum ≈ activeMinutes
+  activityTs: number[];          // Sorted activity timestamps (ms), capped at 20000 — powers the in/out-of-VS-Code split
   type?: SessionType;            // "feature" | "bugfix" | "research" | "refactor" | "review" | "docs" | "ops" | "other"
   description?: string;          // User-provided description
   notes: { at: number; text: string }[];  // Timestamped notes
@@ -77,6 +79,11 @@ interface FileTouch {
   lastTouch: number;             // Last edit timestamp (ms)
 }
 
+interface ActiveSpan {
+  start: number;                 // Span start timestamp (ms)
+  end: number;                   // Span end timestamp (ms) — last activity in the run
+}
+
 interface SessionCommits {
   hash: string;                  // Short commit hash (7-40 chars)
   subject: string;               // Commit message subject
@@ -86,8 +93,12 @@ interface SessionCommits {
 **Example line**:
 
 ```json
-{"id":"20260903-2200-a1b2-c3d4","workspaceKey":"abc1234567","workspaceName":"my-project","startedAt":1725397200000,"endedAt":1725404400000,"lastActivityAt":1725404400000,"activeMinutes":95,"type":"feature","description":"Fix login bug","notes":[{"at":1725400800000,"text":"Fixed validation logic"}],"needsDescription":false,"events":{"edits":142,"saves":23,"terminal":8,"topFiles":[{"path":"/home/user/my-project/src/auth.ts","edits":45,"firstTouch":1725397200000,"lastTouch":1725404400000},{"path":"/home/user/my-project/src/login.ts","edits":32,"firstTouch":1725397500000,"lastTouch":1725404000000}]},"gitBranch":"fix/login","commits":[{"hash":"a1b2c3d","subject":"Fix login validation"},{"hash":"e4f5g6h","subject":"Add error handling"}],"closedReason":"user"}
+{"id":"20260903-2200-a1b2-c3d4","workspaceKey":"abc1234567","workspaceName":"my-project","startedAt":1725397200000,"endedAt":1725404400000,"lastActivityAt":1725404400000,"activeMinutes":5700000,"activeSpans":[{"start":1725397200000,"end":1725400800000},{"start":1725402000000,"end":1725404400000}],"activityTs":[1725397200000,1725397800000,1725400200000,1725402000000,1725403200000,1725404400000],"type":"feature","description":"Fix login bug","notes":[{"at":1725400800000,"text":"Fixed validation logic"}],"needsDescription":false,"events":{"edits":142,"saves":23,"terminal":8,"topFiles":[{"path":"/home/user/my-project/src/auth.ts","edits":45,"firstTouch":1725397200000,"lastTouch":1725404400000},{"path":"/home/user/my-project/src/login.ts","edits":32,"firstTouch":1725397500000,"lastTouch":1725404000000}]},"gitBranch":"fix/login","commits":[{"hash":"a1b2c3d","subject":"Fix login validation"},{"hash":"e4f5g6h","subject":"Add error handling"}],"closedReason":"user"}
 ```
+
+**Units**: `activeMinutes` is stored in **milliseconds** (it is accrued as `now − lastActivityAt` gaps). Consumers must NOT multiply by 60000 — old "minutes" consumers did and produced 60000×-inflated durations (fixed in v0.2.0).
+
+**In / out-of-VS-Code split (filter time)**: `activeSpans` are stored untagged. At report time, a span is classified as *in VS Code* iff its `end` timestamp appears in `activityTs` (an outside-VS-Code span ends at an idle-confirmation timestamp, which is never a recorded activity). Legacy sessions without `activeSpans` are reconstructed by walking `activityTs` and summing gaps of ≤ `idleGapMs` (see `src/reporting/spans.ts`).
 
 **Operations**:
 - **Append**: `appendLine(file, data)` — POSIX near-atomic (open, write, close)
@@ -113,7 +124,11 @@ interface SessionCommits {
   "workspaceName": "my-project",
   "startedAt": 1725397200000,
   "lastActivityAt": 1725400800000,
-  "activeMinutes": 60,
+  "activeMinutes": 3600000,
+  "activeSpans": [
+    { "start": 1725397200000, "end": 1725400800000 }
+  ],
+  "activityTs": [1725397200000, 1725397800000, 1725400200000, 1725400800000],
   "type": "feature",
   "description": "Fix login bug",
   "notes": [],
@@ -238,6 +253,8 @@ Active snapshot created: `~/.lalog/active/abc1234567.json`
   "startedAt": 1725397200000,
   "lastActivityAt": 1725397200000,
   "activeMinutes": 0,
+  "activeSpans": [],
+  "activityTs": [],
   "notes": [],
   "needsDescription": false,
   "events": { "edits": 0, "saves": 0, "terminal": 0, "topFiles": [] }
@@ -261,7 +278,11 @@ Snapshot updated:
   "workspaceName": "my-project",
   "startedAt": 1725397200000,
   "lastActivityAt": 1725400800000,
-  "activeMinutes": 90,
+  "activeMinutes": 5400000,
+  "activeSpans": [
+    { "start": 1725397200000, "end": 1725400800000 }
+  ],
+  "activityTs": [1725397200000, 1725397800000, 1725400200000, 1725400800000],
   "type": "feature",
   "description": "Fix login bug",
   "notes": [{"at": 1725400800000, "text": "Fix login bug"}],
@@ -286,7 +307,7 @@ Session spans midnight. `startedAt` remains `2026-09-03T22:00:00`.
 Git annotation added. Session closed and appended to `sessions.jsonl`:
 
 ```json
-{"id":"20260903-2200-a1b2-c3d4","workspaceKey":"abc1234567","workspaceName":"my-project","startedAt":1725397200000,"endedAt":1725404400000,"lastActivityAt":1725404400000,"activeMinutes":155,"type":"feature","description":"Fix login bug","notes":[{"at":1725400800000,"text":"Fix login bug"}],"needsDescription":false,"events":{"edits":142,"saves":23,"terminal":8,"topFiles":[{"path":"/home/user/my-project/src/auth.ts","edits":45,"firstTouch":1725397200000,"lastTouch":1725404400000}]},"gitBranch":"fix/login","commits":[{"hash":"a1b2c3d","subject":"Fix login validation"}],"closedReason":"user"}
+{"id":"20260903-2200-a1b2-c3d4","workspaceKey":"abc1234567","workspaceName":"my-project","startedAt":1725397200000,"endedAt":1725404400000,"lastActivityAt":1725404400000,"activeMinutes":9300000,"activeSpans":[{"start":1725397200000,"end":1725400800000},{"start":1725402000000,"end":1725404400000}],"activityTs":[1725397200000,1725397800000,1725400200000,1725402000000,1725403200000,1725404400000],"type":"feature","description":"Fix login bug","notes":[{"at":1725400800000,"text":"Fix login bug"}],"needsDescription":false,"events":{"edits":142,"saves":23,"terminal":8,"topFiles":[{"path":"/home/user/my-project/src/auth.ts","edits":45,"firstTouch":1725397200000,"lastTouch":1725404400000}]},"gitBranch":"fix/login","commits":[{"hash":"a1b2c3d","subject":"Fix login validation"}],"closedReason":"user"}
 ```
 
 Active snapshot deleted: `~/.lalog/active/abc1234567.json` removed.

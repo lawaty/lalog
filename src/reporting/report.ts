@@ -3,6 +3,7 @@ import * as path from 'path';
 import { Session } from '../core/types';
 import { fmtDuration } from '../prompts/promptCoordinator';
 import { LaLogPaths } from '../storage/store';
+import { splitActiveMinutes } from './spans';
 
 export type ReportRange = 'today' | 'yesterday' | 'week' | 'month' | 'last-month' | 'custom';
 
@@ -10,7 +11,8 @@ export type ReportRange = 'today' | 'yesterday' | 'week' | 'month' | 'last-month
 export async function generateReport(
   sessions: Session[],
   range: ReportRange,
-  now = Date.now()
+  now = Date.now(),
+  idleGapMs = 15 * 60 * 1000
 ): Promise<string> {
   const start = rangeStart(range, now);
   const end = rangeEnd(range, now);
@@ -18,10 +20,12 @@ export async function generateReport(
     (s) => s.startedAt >= start && s.startedAt < end && s.endedAt
   );
 
-  const totalActive = within.reduce((sum, s) => sum + s.activeMinutes, 0) * 60000;
+  const totalActive = within.reduce((sum, s) => sum + s.activeMinutes, 0);
+  const inVscode = within.reduce((sum, s) => sum + splitActiveMinutes(s, idleGapMs).vscodeMs, 0);
+  const outside = Math.max(0, totalActive - inVscode);
   const byProject = new Map<string, number>();
   for (const s of within) {
-    byProject.set(s.workspaceName, (byProject.get(s.workspaceName) ?? 0) + s.activeMinutes * 60000);
+    byProject.set(s.workspaceName, (byProject.get(s.workspaceName) ?? 0) + s.activeMinutes);
   }
 
   const dayOrder: string[] = [];
@@ -37,6 +41,9 @@ export async function generateReport(
   lines.push(`# LaLog — ${rangeLabel(range)}`);
   lines.push('');
   lines.push(`**Active time: ${fmtDuration(totalActive)}** across ${within.length} session(s)`);
+  if (within.length) {
+    lines.push(`In VS Code: ${fmtDuration(inVscode)} · Outside VS Code: ${fmtDuration(outside)}`);
+  }
   lines.push('');
   lines.push(`Sessions started: ${days || 'none'}`);
   lines.push('');
@@ -60,8 +67,10 @@ export async function generateReport(
     });
     const end = s.endedAt ? new Date(s.endedAt).toLocaleString([], { hour: '2-digit', minute: '2-digit' }) : '?';
     const desc = s.description ? ` — ${s.description}` : s.needsDescription ? ' *(no description)*' : '';
+    const bx = splitActiveMinutes(s, idleGapMs);
+    const bxNote = bx.outsideMs > 0 ? ` · *${fmtDuration(bx.vscodeMs)} in Code / ${fmtDuration(bx.outsideMs)} outside*` : '';
     lines.push(
-      `### ${start} → ${end} · ${fmtDuration(s.activeMinutes * 60000)} · ${s.workspaceName}${s.type ? ` · ${s.type}` : ''}`
+      `### ${start} → ${end} · ${fmtDuration(s.activeMinutes)} · ${s.workspaceName}${s.type ? ` · ${s.type}` : ''}${bxNote}`
     );
     lines.push(desc);
     if (s.events.topFiles.length) {

@@ -36,6 +36,12 @@ export interface SessionCommits {
   subject: string;
 }
 
+/** A contiguous period counted as active (no source tag — classified at filter time). */
+export interface ActiveSpan {
+  start: number;
+  end: number;
+}
+
 export interface Session {
   id: string;
   workspaceKey: string;
@@ -57,6 +63,10 @@ export interface Session {
   gitBranch?: string;
   commits?: SessionCommits[];
   closedReason?: ClosedReason;
+  /** Contiguous active periods (start/end). Sum equals activeMinutes. */
+  activeSpans: ActiveSpan[];
+  /** Raw timestamps of detected VS Code activity (edits/saves/terminal/etc). */
+  activityTs: number[];
 }
 
 export interface Thresholds {

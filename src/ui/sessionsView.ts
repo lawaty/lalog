@@ -15,7 +15,7 @@ export class SessionTreeItem extends vscode.TreeItem {
     if (kind === 'session') {
       this.iconPath = new vscode.ThemeIcon(session.needsDescription ? 'warning' : 'check');
       this.description =
-        fmtDuration(session.activeMinutes * 60000) +
+        fmtDuration(session.activeMinutes) +
         (session.type ? ` · ${session.type}` : '');
       this.command = {
         command: 'lalog.editSession',
@@ -50,7 +50,7 @@ export class SessionsTreeProvider implements vscode.TreeDataProvider<SessionTree
       }
       const days = [...byDay.entries()].sort((a, b) => (a[0] < b[0] ? 1 : -1));
       return days.map(([day, list]) => {
-        const total = list.reduce((sum, s) => sum + s.activeMinutes * 60000, 0);
+        const total = list.reduce((sum, s) => sum + s.activeMinutes, 0);
         const n = list.length;
         return new SessionTreeItem(
           list[0],

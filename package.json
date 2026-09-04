@@ -5,6 +5,10 @@
   "version": "0.2.0",
   "publisher": "lawaty",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lawaty/lalog.git"
+  },
   "engines": {
     "vscode": "^1.93.0"
   },
@@ -50,8 +54,13 @@
         },
         "lalog.idleGapMinutes": {
           "type": "number",
-          "default": 5,
-          "description": "Gap between events that still counts as continuous active work."
+          "default": 15,
+          "description": "Gap between events that still counts as continuous active work. Tune to how often you touch VS Code while working (default 15 min)."
+        },
+        "lalog.idleConfirmAfterMinutes": {
+          "type": "number",
+          "default": 15,
+          "description": "After this many idle minutes, ask 'Are you still there?' — lets you keep the session running (and count the time as outside-VS-Code work) or end it."
         },
         "lalog.autoEndAfterIdleMinutes": {
           "type": "number",

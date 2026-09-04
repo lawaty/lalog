@@ -17,7 +17,7 @@ export function sessionSnapshot(s: Session, sendCommitSubjects: boolean): string
   const parts: string[] = [];
   parts.push(`Workspace: ${s.workspaceName}`);
   parts.push(
-    `Active: ${Math.round(s.activeMinutes)} min (started ${new Date(s.startedAt).toLocaleString()})`
+    `Active: ${Math.round(s.activeMinutes / 60000)} min (started ${new Date(s.startedAt).toLocaleString()})`
   );
   parts.push(`Edits: ${s.events.edits}, Saves: ${s.events.saves}, Terminal actions: ${s.events.terminal}`);
   if (s.type) parts.push(`Type: ${s.type}`);

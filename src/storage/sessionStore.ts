@@ -27,7 +27,8 @@ export class SessionStore {
   }
 
   loadActive(wsKey: string): Session | null {
-    return readSnapshot<Session>(this.snapshotPath(wsKey));
+    const s = readSnapshot<Session>(this.snapshotPath(wsKey));
+    return s ? normalizeSession(s) : null;
   }
 
   removeActive(wsKey: string): void {
@@ -51,7 +52,7 @@ export class SessionStore {
     const sessions: Session[] = [];
     await streamLines(this.opts.paths.sessionsFile, (o) => {
       const s = o as Session;
-      if (s.id && s.startedAt !== undefined) sessions.push(s);
+      if (s.id && s.startedAt !== undefined) sessions.push(normalizeSession(s));
     });
     return sessions.sort((a, b) => a.startedAt - b.startedAt);
   }
@@ -78,6 +79,8 @@ export class SessionStore {
       notes: [],
       needsDescription: false,
       events: { edits: 0, saves: 0, terminal: 0, topFiles: [] },
+      activeSpans: [],
+      activityTs: [],
     };
   }
 
@@ -107,4 +110,15 @@ export class SessionStore {
       }
     }
   }
+}
+
+/** Backfill fields added in later versions so old sessions behave like new ones. */
+export function normalizeSession(s: Session): Session {
+  if (!Array.isArray(s.activeSpans)) s.activeSpans = [];
+  if (!Array.isArray(s.activityTs)) s.activityTs = [];
+  if (!Array.isArray(s.notes)) s.notes = [];
+  if (!s.events || !Array.isArray(s.events.topFiles)) {
+    s.events = { edits: 0, saves: 0, terminal: 0, topFiles: [] };
+  }
+  return s;
 }

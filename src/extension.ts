@@ -251,9 +251,9 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 function fmtActive(s: { activeMinutes: number }): string {
-  const m = Math.round(s.activeMinutes);
-  const h = Math.floor(m / 60);
-  const r = m % 60;
+  const totalMin = Math.round(s.activeMinutes / 60000);
+  const h = Math.floor(totalMin / 60);
+  const r = totalMin % 60;
   return h > 0 ? `${h}h ${r}m` : `${r}m`;
 }
 

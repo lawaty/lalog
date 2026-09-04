@@ -25,7 +25,7 @@ LaLog is built on five principles:
 
 1. **Passive capture, active description** — The extension captures events (edits, saves, terminal, file ops, debug, tasks) automatically. The human only provides descriptions at natural breakpoints.
 2. **Sessions are engagement threads** — Not day-bound. An overnight coding session from 22:00 to 02:00 is one session. The only boundary is ~2h idle.
-3. **Never trust interval timers** — Active time is computed from event gaps, not `setInterval`. If you step away for 10 minutes, that gap is not counted.
+3. **Never trust interval timers; confirm idle** — Active time is computed from event gaps, not `setInterval`. If you step away for more than 15 minutes, that gap is not counted — unless you confirm "Are you still there?", in which case the idle stretch counts as active but *outside* VS Code (tagless spans classified at report time).
 4. **Breakpoint-aligned prompting** — Prompts are held until a natural pause (terminal command ends, debug session terminates, return from idle). No interrupting flow.
 5. **Local-only, crash-safe** — JSONL append-only storage. Atomic snapshots for active sessions. Zero telemetry.
 

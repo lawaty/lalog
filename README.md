@@ -42,6 +42,7 @@ Core settings under `lalog.*`, AI settings under `lalog.ai.*`. Notable defaults:
 |---|---|
 | `lalog.dataDir` | `~/.lalog` |
 | `lalog.idleGapMinutes` | `15` |
+| `lalog.idleConfirmAfterMinutes` | `15` |
 | `lalog.autoEndAfterIdleMinutes` | `120` |
 | `lalog.ai.enabled` | `false` |
 | `lalog.ai.model` | `opencode/big-pickle` |

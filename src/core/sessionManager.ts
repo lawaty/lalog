@@ -13,6 +13,7 @@ import { ActivityTracker } from '../core/activityTracker';
 import { BreakpointDetector, BreakpointKind } from '../core/breakpoints';
 import { PromptCoordinator } from '../prompts/promptCoordinator';
 import { DescribeResult } from '../prompts/describeFlow';
+import { updateActiveSpan } from '../core/spans';
 import { LaLogPaths, workspaceKey } from '../storage/store';
 
 export class SessionManager implements vscode.Disposable {
@@ -87,6 +88,7 @@ export class SessionManager implements vscode.Disposable {
         this.session = existing;
         this.machine = recoverActiveMachine(existing, now, this.th);
         this.activityPeek = existing.lastActivityAt;
+        this.openSpanStart = null; // next activity opens a fresh span
         this.firstActivityAfterOpen = true;
         this.scheduleSave();
         this.onStateChanged();
@@ -95,6 +97,9 @@ export class SessionManager implements vscode.Disposable {
       // Stale (prior run/crash): close it, then start fresh below.
       await this.finishRecovered(existing, 'recovery-skip', existing.lastActivityAt);
     }
+
+    this.openSpanStart = null;
+    this.lastIdleArmAt = 0;
 
     // Collect an optional description of a previously shutdown-ended session, then
     // always start a tracked session so all work is recorded even without a
@@ -116,6 +121,12 @@ export class SessionManager implements vscode.Disposable {
   /** Tiny cache to distinguish "just resumed, don't accrue a gap" when the session loads. */
   private activityPeek = 0;
   private firstActivityAfterOpen = true;
+  /** Earliest end of the current contiguous active run (span open end = lastActivityAt). */
+  private openSpanStart: number | null = null;
+  /** Cooldown: only re-arm the idle prompt after this time (ms epoch). */
+  private lastIdleArmAt = 0;
+  /** Guard against stacking idle prompts. */
+  private idlePromptOpen = false;
 
   private onActivityEvent(ev: TrackedEvent, filePath?: string, now?: number): void {
     const ts = now ?? Date.now();
@@ -131,9 +142,15 @@ export class SessionManager implements vscode.Disposable {
       }
     }
 
+    const prev = this.machine.lastActivityAt;
     onActivity(this.machine, ts, this.th);
     const s = this.machine.state;
     this.session.activeMinutes = this.machine.activeMinutes;
+
+    // Continue building the active-span id. No source tag — classification happens
+    // at filter time by checking which spans contain VS Code activity timestamps.
+    this.accrueActivity(prev, ts);
+
     this.store.recordEvent(this.session, ev, filePath, ts);
     this.breakpoints.checkReturnIdle(ts);
 
@@ -147,6 +164,75 @@ export class SessionManager implements vscode.Disposable {
     } else if (s === 'untracked' && this.machine.untrackedNudges === 1) {
       this.nudgeToStart();
     }
+  }
+
+  /** Maintain the bounded activity timestamp log and the open active span. */
+  private accrueActivity(prev: number | null, now: number): void {
+    if (!this.session) return;
+    if (this.session.activityTs.length < 20000) this.session.activityTs.push(now);
+    this.lastIdleArmAt = now + this.th.idleConfirm;
+    const res = updateActiveSpan(prev, now, this.th.idleGap, this.openSpanStart);
+    this.openSpanStart = res.openSpanStart;
+    if (res.closed) this.session.activeSpans.push(res.closed);
+  }
+
+  private closeOpenSpanAt(until: number): void {
+    if (!this.session) return;
+    if (this.openSpanStart !== null && until > this.openSpanStart) {
+      this.session.activeSpans.push({ start: this.openSpanStart, end: until });
+    }
+    this.openSpanStart = null;
+  }
+
+  /** Persisted totals always equal the sum of finalized spans. */
+  private syncSessionActive(): void {
+    if (!this.session) return;
+    this.session.activeMinutes = this.machine.activeMinutes;
+  }
+
+  /**
+   * 'Are you still there?' — called from the heartbeat. If the user has been
+   * idle >= idleConfirm and confirms they're still working (e.g. outside VS
+   * Code), the idle period counts as active but has no VS Code activity, so
+   * filter-time classification tags it 'outside'.
+   */
+  private checkIdle(now: number): void {
+    if (!this.session || this.idlePromptOpen) return;
+    const m = this.machine;
+    if (m.state !== 'active' && m.state !== 'describePending' && m.state !== 'wrapPending' && m.state !== 'grace') {
+      return;
+    }
+    if (m.lastActivityAt === null) return;
+    if (now - m.lastActivityAt < this.th.idleConfirm) return;
+    if (now < this.lastIdleArmAt) return;
+    this.idlePromptOpen = true;
+    const session = this.session;
+    void this.prompts.askStillWorking(session).then((choice) => {
+      this.idlePromptOpen = false;
+      this.lastIdleArmAt = Date.now() + this.th.idleConfirm;
+      if (choice === 'end') {
+        void this.endSession('user');
+      } else if (choice === 'active') {
+        this.accrueOutsideConfirmed(Date.now());
+      }
+    });
+  }
+
+  /** A confirmed 'still working' idle period becomes an (outside) active span. */
+  private accrueOutsideConfirmed(now: number): void {
+    if (!this.session) return;
+    const m = this.machine;
+    if (m.lastActivityAt === null) return;
+    this.closeOpenSpanAt(m.lastActivityAt);
+    if (now > m.lastActivityAt) {
+      this.session.activeSpans.push({ start: m.lastActivityAt, end: now });
+      m.activeMinutes += now - m.lastActivityAt;
+    }
+    this.session.activeMinutes = m.activeMinutes;
+    m.lastActivityAt = now;
+    this.openSpanStart = now;
+    this.scheduleSave();
+    this.onStateChanged();
   }
 
   private onBreakpoint(kind: BreakpointKind): void {
@@ -331,11 +417,13 @@ export class SessionManager implements vscode.Disposable {
     if (!this.session) return null;
     const s = this.session;
     const ended = autoClose(this.machine, Date.now());
+    this.closeOpenSpanAt(ended.endedAt);
     s.activeMinutes = ended.activeMinutes;
     await this.store.close(s, reason, ended.endedAt);
     this.clearForceTimers();
     this.session = null;
     this.machine = newMachine();
+    this.openSpanStart = null;
     this.firstActivityAfterOpen = true;
     this.onStateChanged();
     return s;
@@ -392,7 +480,10 @@ export class SessionManager implements vscode.Disposable {
   start(): void {
     this.activity.start();
     void this.openWorkspace();
-    this.heartbeatTimer = setInterval(() => this.scheduleSave(), 60 * 1000);
+    this.heartbeatTimer = setInterval(() => {
+      this.scheduleSave();
+      this.checkIdle(Date.now());
+    }, 60 * 1000);
   }
 
   dispose(): void {

@@ -37,38 +37,36 @@ A **session** represents a continuous engagement thread with a workspace. Sessio
 2. **Recovery** — if an active session snapshot exists for the workspace:
    - Idle ≥ 2h → auto-close (endedAt = lastActivityAt), offer closing note
    - Idle < 30min → resume session (reset lastActivityAt to avoid gap accrual)
-   - 30min ≤ idle < 2h → continue session (gap uncounted)
-3. **New session** — if no snapshot exists, prompt: *"Work in \<workspace\>? Start a session?"*
-   - Options: "Start a work session", "Continue yesterday's thread" (if previous exists), "No, keep it untracked"
-4. **Active tracking** — events accrue active minutes (gap-based model)
+   - 30min ≤ idle < 2h → auto-close as `recovery-skip`; a fresh session starts
+3. **New session** — if no snapshot exists, tracking **auto-starts** (never untracked). If the previous session was ended by VS Code closing, an optional description prompt appears
+4. **Active tracking** — events accrue active time gap-based; each contiguous run is a span; confirmed-idle time extends a span classified as *outside VS Code*
 5. **Describe prompt** — after ~90 active minutes, prompt at natural breakpoint
 6. **Wrap prompt** — after ~3.5h active minutes, prompt to wrap or extend
-7. **End** — user ends manually, or auto-close after 2h idle
+7. **Idle check** — after `idleConfirmAfterMinutes` (15) of no activity, "Are you still there?"; confirming keeps the span open (counted outside VS Code), ending or ignoring stops/skips
+8. **End** — user ends manually, VS Code closes (`vscode-shutdown`), or auto-close after 2h idle
 
-### "Start a new session?" on Open
+### Auto-Start on Open
 
-When VS Code opens a workspace with no active session:
+Opening a workspace with no active session starts tracking immediately — there is no "untracked" state and no start prompt. The description prompt (if the previous session was cut short by VS Code closing) is the only pre-session dialog, and it's optional:
 
 ```
 ┌─────────────────────────────────────────┐
-│  Work in my-project?                    │
-│  Track this work session?               │
+│  Describe your last session in          │
+│  "my-project" (2h 15m active)           │
 │                                         │
-│  $(history) Continue yesterday's thread │
-│     "Fix login bug"                     │
-│  $(play) Start a work session           │
-│     workspace: my-project               │
-│  $(mute) No, keep it untracked          │
-│     one gentle reminder later           │
+│  optional — e.g. "fixed the payment     │
+│  parsing bug"                           │
+│  It was ended when VS Code closed.      │
+│  Optional · Esc to skip                 │
 └─────────────────────────────────────────┘
 ```
 
-- If a previous session exists for this workspace, a "Continue yesterday's thread" option appears with the previous description
-- Choosing "No" puts the session in `untracked` state — a single nudge will appear after 30 active minutes
+- If a previous session exists for this workspace, its description/type seed the new session
+- Nothing is ever left untracked — all work is recorded
 
 ### Auto-Assignment to Explicit Session
 
-When the user explicitly starts a session (via the prompt or `lalog.startSession` command), all subsequent events are assigned to that session. Events that arrived before the session started (in `untracked` state) are not retroactively assigned.
+Because sessions always auto-start, every event belongs to the active session of its workspace. The `lalog.startSession` command (or wrap "start a new one") ends the current session and begins a fresh one; subsequent events are assigned to the new session.
 
 ---
 
@@ -197,7 +195,7 @@ Prompts are **not** delivered on fixed timers. They are held until a natural bre
 | `terminal` | Terminal command ends | `onDidEndTerminalShellExecution` |
 | `git-commit` | `git commit` command ends | Regex match on command line |
 | `debug` | Debug session terminates | `onDidTerminateDebugSession` |
-| `return-idle` | Return from idle gap ≥ 5 min | `BreakpointDetector.checkReturnIdle()` |
+| `return-idle` | Return from idle gap ≥ 15 min | `BreakpointDetector.checkReturnIdle()` |
 | `force` | Force timer expires (30 min after prompt threshold) | `setTimeout` in SessionManager |
 
 This ensures prompts don't interrupt flow — they arrive when you're already pausing.
@@ -211,7 +209,7 @@ This ensures prompts don't interrupt flow — they arrive when you're already pa
 Closed sessions are appended to `~/.lalog/sessions.jsonl`:
 
 ```jsonl
-{"id":"20260903-2200-a1b2-c3d4","workspaceKey":"abc1234567","workspaceName":"my-project","startedAt":1725397200000,"endedAt":1725404400000,"lastActivityAt":1725404400000,"activeMinutes":95,"type":"feature","description":"Fix login bug","notes":[],"needsDescription":false,"events":{"edits":142,"saves":23,"terminal":8,"topFiles":[...]},"gitBranch":"fix/login","commits":[{"hash":"a1b2c3d","subject":"Fix login validation"}],"closedReason":"user"}
+{"id":"20260903-2200-a1b2-c3d4","workspaceKey":"abc1234567","workspaceName":"my-project","startedAt":1725397200000,"endedAt":1725404400000,"lastActivityAt":1725404400000,"activeMinutes":5700000,"activeSpans":[{"start":1725397200000,"end":1725400800000}],"activityTs":[1725397200000,1725397800000,1725400200000,1725400800000],"type":"feature","description":"Fix login bug","notes":[],"needsDescription":false,"events":{"edits":142,"saves":23,"terminal":8,"topFiles":[...]},"gitBranch":"fix/login","commits":[{"hash":"a1b2c3d","subject":"Fix login validation"}],"closedReason":"user"}
 ```
 
 - **Append-only** — no read-modify-write for normal operation
@@ -233,8 +231,9 @@ Active sessions are persisted as atomic JSON snapshots in `~/.lalog/active/<wsKe
 On activation, the extension:
 1. Loads the active snapshot for the current workspace
 2. Checks idle duration (`now - lastActivityAt`)
-3. Decides: auto-close, resume, or continue (see [Session Lifecycle](#session-lifecycle))
+3. Decides: auto-close (idle ≥ 2h → `auto-idle`, 30min–2h → `recovery-skip`), or resume (idle < 30min)
 4. Rebuilds the in-memory `Machine` from the snapshot
+5. If the previous session was ended by VS Code closing (`vscode-shutdown`) and has no description, offers an optional description prompt (see [Auto-Start on Open](#auto-start-on-open))
 
 ### Workspace Key
 
@@ -403,7 +402,8 @@ All settings are under `lalog.*` in VS Code settings (`settings.json`).
 | `lalog.wrapAfterMinutes` | number | `210` | Active minutes before wrap prompt (3.5h) |
 | `lalog.graceMinutes` | number | `30` | Extension length on "Extend" choice |
 | `lalog.maxGraceExtensions` | number | `3` | Max free "Extend" choices before description required |
-| `lalog.idleGapMinutes` | number | `5` | Gap between events that still counts as active |
+| `lalog.idleGapMinutes` | number | `15` | Gap between events that still counts as active |
+| `lalog.idleConfirmAfterMinutes` | number | `15` | Idle before the "Are you still there?" check fires (confirmed idle counts as active outside VS Code) |
 | `lalog.autoEndAfterIdleMinutes` | number | `120` | Idle time before auto-close (2h). Sessions are not day-bound; this is the only boundary |
 | `lalog.resumeWindowMinutes` | number | `30` | Recovery: if last activity was within this window on restart, offer resume |
 | `lalog.debugTimeScale` | number | `1` | Divide all time thresholds by this factor. Set 60 to test a "4-hour" session in 4 minutes |
@@ -416,7 +416,8 @@ All time settings are resolved to milliseconds with `debugTimeScale` applied:
 
 ```typescript
 thresholdsMs(cfg) → {
-  idleGap: 5 * 60 * 1000 / scale,
+  idleGap: 15 * 60 * 1000 / scale,
+  idleConfirm: 15 * 60 * 1000 / scale,
   describeAt: 90 * 60 * 1000 / scale,
   describeForce: 120 * 60 * 1000 / scale,  // describeAt + 30min
   wrapAt: 210 * 60 * 1000 / scale,

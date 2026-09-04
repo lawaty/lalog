@@ -80,7 +80,7 @@ export class PromptCoordinator {
   async askWrap(machine: Machine, session: Session, breakpoint: BreakpointKind | null): Promise<WrapResult> {
     if (!(await this.acquire())) return { choice: 'skipped' };
     try {
-      const activeH = fmtDuration(session.activeMinutes * 60 * 1000 + (Date.now() - session.lastActivityAt));
+      const activeH = fmtDuration(session.activeMinutes);
       const desc = session.description ? ` "${session.description}"` : '';
       const pick = await vscode.window.showQuickPick(
         [
@@ -105,7 +105,7 @@ export class PromptCoordinator {
   async askClosingNote(session: Session): Promise<string | null> {
     if (!(await this.acquire())) return null;
     try {
-      const activeH = fmtDuration(session.activeMinutes * 60 * 1000);
+      const activeH = fmtDuration(session.activeMinutes);
       const text = await vscode.window.showInputBox({
         title: `Unfinished session "${session.workspaceName}" (${activeH} active)`,
         value: session.description ?? '',
@@ -123,7 +123,7 @@ export class PromptCoordinator {
   async askShutdownDescription(session: Session): Promise<string | null> {
     if (!(await this.acquire())) return null;
     try {
-      const activeH = fmtDuration(session.activeMinutes * 60 * 1000);
+      const activeH = fmtDuration(session.activeMinutes);
       const text = await vscode.window.showInputBox({
         title: `Describe your last session in "${session.workspaceName}" (${activeH} active)`,
         value: session.description ?? '',
@@ -132,6 +132,31 @@ export class PromptCoordinator {
         ignoreFocusOut: true,
       });
       return text === undefined ? null : text.trim() ? text.trim() : null;
+    } finally {
+      this.release();
+    }
+  }
+
+  /** 'Are you still there?' — fired by the heartbeat when a session goes idle. */
+  async askStillWorking(session: Session): Promise<'active' | 'end' | null> {
+    if (!(await this.acquire())) return null;
+    try {
+      const activeH = fmtDuration(session.activeMinutes);
+      const pick = await vscode.window.showQuickPick(
+        [
+          {
+            label: '$(check) Yes, still working',
+            description: 'keep tracking — this idle time counts as outside-VS-Code work',
+          },
+          {
+            label: '$(stop) No, end this session',
+            description: `close session (${activeH} active)`,
+          },
+        ],
+        { title: `Are you still there? · ${session.workspaceName}`, placeHolder: 'Idle for a while — still working?', ignoreFocusOut: true }
+      );
+      if (!pick) return null;
+      return pick.label.includes('Yes') ? 'active' : 'end';
     } finally {
       this.release();
     }

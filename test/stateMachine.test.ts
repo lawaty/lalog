@@ -7,6 +7,7 @@ import type { ThresholdsMs } from '../src/core/config';
 const MIN = 60 * 1000;
 const th: ThresholdsMs = {
   idleGap: 5 * MIN,
+  idleConfirm: 15 * MIN,
   describeAt: 90 * MIN,
   describeForce: 120 * MIN,
   wrapAt: 210 * MIN,
