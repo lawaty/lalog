@@ -38,28 +38,6 @@ export class PromptCoordinator {
     this.visible = false;
   }
 
-  /** Nudge for 'untracked' (opened workspace, chose No to start). Only once. */
-  async askStart(session: Session, hadPrevious?: Session): Promise<boolean> {
-    if (!(await this.acquire())) return false;
-    try {
-      const label = hadPrevious
-        ? `$(history) Continue yesterday's thread: "${hadPrevious.description ?? hadPrevious.workspaceName}"`
-        : undefined;
-      const pick = await vscode.window.showQuickPick(
-        [
-          ...(label ? [{ label } as vscode.QuickPickItem] : []),
-          { label: '$(play) Start a work session', description: `workspace: ${session.workspaceName}` },
-          { label: '$(mute) No, keep it untracked', description: 'one gentle reminder later' },
-        ],
-        { title: `Work in ${session.workspaceName}?`, placeHolder: 'Track this work session?', ignoreFocusOut: true }
-      );
-      if (!pick) return false;
-      return pick.label.includes('Start') || pick.label.includes("Continue");
-    } finally {
-      this.release();
-    }
-  }
-
   /** The 90-minute checkpoint — describe what you're doing. Returns result. */
   async askDescribe(
     machine: Machine,

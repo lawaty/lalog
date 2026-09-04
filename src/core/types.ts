@@ -1,6 +1,5 @@
 export type SessionState =
   | 'idle'
-  | 'untracked'
   | 'active'
   | 'describePending'
   | 'wrapPending'
@@ -68,22 +67,5 @@ export interface Session {
   /** Raw timestamps of detected VS Code activity (edits/saves/terminal/etc). */
   activityTs: number[];
 }
-
-export interface Thresholds {
-  idleGapMin: number;
-  describeAtMin: number;
-  describeForceMin: number;
-  wrapAtMin: number;
-  wrapForceMin: number;
-  graceMin: number;
-  maxGraceExtensions: number;
-  hardSplitMin: number;
-  autoEndIdleMin: number;
-  resumeWindowMin: number;
-  untrackedNudgeMin: number;
-}
-
-/** All thresholds in milliseconds, after applying debugTimeScale. */
-export interface ResolvedThresholds extends Record<keyof Thresholds, number> {}
 
 export type TrackedEvent = 'edit' | 'save' | 'terminal' | 'fileop' | 'editor' | 'debug' | 'task';

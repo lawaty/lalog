@@ -161,8 +161,6 @@ export class SessionManager implements vscode.Disposable {
       this.schedulePrompt('describe');
     } else if (s === 'wrapPending') {
       this.schedulePrompt('wrap');
-    } else if (s === 'untracked' && this.machine.untrackedNudges === 1) {
-      this.nudgeToStart();
     }
   }
 
@@ -271,7 +269,7 @@ export class SessionManager implements vscode.Disposable {
   // Exposed for manual "Describe now" command.
   presentDescribeNow(): void {
     if (!this.session) return;
-    if (this.machine.state === 'idle' || this.machine.state === 'untracked') {
+    if (this.machine.state === 'idle') {
       startSession(this.machine, Date.now());
     }
     this.machine.state = 'describePending';
@@ -395,23 +393,6 @@ export class SessionManager implements vscode.Disposable {
     this.prompts.aiDraft = fn;
   }
 
-  private nudgeToStart(): void {
-    if (!this.session) return;
-    void (async () => {
-      const y = await vscode.window.showInformationMessage(
-        `Work in "${this.session!.workspaceName}" is untracked. Start a session?`,
-        'Start',
-        'No'
-      );
-      if (y === 'Start') {
-        startSession(this.machine, Date.now());
-        this.session!.lastActivityAt = Date.now();
-        this.scheduleSave();
-        this.onStateChanged();
-      }
-    })();
-  }
-
   /** Wrap the current window's session for a reason. Async: returns the closed session. */
   async endSession(reason: Exclude<ClosedReason, 'workspace-switch'>): Promise<Session | null> {
     if (!this.session) return null;
@@ -483,7 +464,24 @@ export class SessionManager implements vscode.Disposable {
     this.heartbeatTimer = setInterval(() => {
       this.scheduleSave();
       this.checkIdle(Date.now());
+      this.checkAutoEnd(Date.now());
     }, 60 * 1000);
+  }
+
+  /**
+   * Safety net for genuinely abandoned sessions (the only in-window boundary,
+   * ADR-010). The idle-confirm prompt keeps lastActivityAt reset when the user
+   * confirms they're still working, so this only fires for real absence: after
+   * autoEndIdle of no VS Code activity AND no confirmation. endedAt is
+   * lastActivityAt (active-only) so nothing idle is ever counted.
+   */
+  private checkAutoEnd(now: number): void {
+    if (!this.session) return;
+    if (this.idlePromptOpen) return;
+    const m = this.machine;
+    if (m.lastActivityAt === null) return;
+    if (now - m.lastActivityAt < this.th.autoEndIdle) return;
+    void this.endSession('auto-idle');
   }
 
   dispose(): void {
@@ -521,6 +519,5 @@ function recoverActiveMachine(s: Session, now: number, th: ThresholdsMs): Machin
   m.startedAt = s.startedAt;
   m.activeMinutes = s.activeMinutes;
   m.describedThisSession = !!s.description;
-  m.untrackedNudges = 1;
   return m;
 }

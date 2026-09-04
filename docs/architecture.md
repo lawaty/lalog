@@ -45,7 +45,7 @@ flowchart TB
         AT["activityTracker.ts<br/>VS Code event listener"]
         BD["breakpoints.ts<br/>Natural breakpoint detector"]
         CFG["config.ts<br/>Settings + thresholds"]
-        REC["recovery.ts<br/>Machine rebuild from snapshot"]
+        REC["sessionManager.ts<br/>machine rebuild on open"]
         TYP["types.ts<br/>Shared types"]
     end
 
@@ -102,7 +102,7 @@ flowchart TB
 
 | Module | Files | Responsibility |
 |--------|-------|----------------|
-| **core/** | `stateMachine.ts`, `sessionManager.ts`, `activityTracker.ts`, `breakpoints.ts`, `config.ts`, `recovery.ts`, `types.ts` | Pure state machine, session orchestration, VS Code event capture, breakpoint detection, configuration, recovery |
+| **core/** | `stateMachine.ts`, `sessionManager.ts`, `activityTracker.ts`, `breakpoints.ts`, `config.ts`, `spans.ts`, `types.ts` | Pure state machine, session orchestration, VS Code event capture, breakpoint detection, configuration, active-span arithmetic |
 | **prompts/** | `promptCoordinator.ts`, `describeFlow.ts` | Prompt mutex (one at a time, min spacing), 2-step describe UI (type picker → input box) |
 | **storage/** | `sessionStore.ts`, `store.ts` | Session CRUD, JSONL append, atomic snapshots, filesystem primitives |
 | **reporting/** | `aggregate.ts`, `report.ts` | Today's active/untracked time, session-centric markdown reports |
@@ -169,9 +169,7 @@ The state machine is a pure function: `(state, event, thresholds) → newState`.
 stateDiagram-v2
     [*] --> idle
 
-    idle --> untracked : first activity event
-    untracked --> active : user clicks "Start"
-    untracked --> untracked : activity (nudge once at 30min)
+    idle --> active : first activity event (sessions always auto-start)
 
     active --> describePending : activeMinutes >= describeAt (90min)
     active --> wrapPending : activeMinutes >= wrapAt (210min) [if describePending skipped]
@@ -187,7 +185,6 @@ stateDiagram-v2
     grace --> describePending : maxGraceExtensions reached → must describe
 
     note right of idle : No session active
-    note right of untracked : Session object exists<br/>but not tracking active time
     note right of active : Tracking active minutes<br/>(gap-based accrual)
     note right of describePending : Prompt held until<br/>natural breakpoint
     note right of wrapPending : Prompt held until<br/>natural breakpoint
@@ -198,8 +195,7 @@ stateDiagram-v2
 
 | From | To | Trigger | Condition |
 |------|----|---------|-----------|
-| `idle` | `untracked` | `onActivity()` | First event after activation |
-| `untracked` | `active` | `startSession()` | User clicks "Start" on the nudge prompt |
+| `idle` | `active` | `onActivity()` | First event after activation (sessions auto-start) |
 | `active` | `describePending` | `onActivity()` | `activeMinutes >= describeAt` (default 90 min) |
 | `active` | `wrapPending` | `onActivity()` | `activeMinutes >= wrapAt` (default 210 min) |
 | `describePending` | `active` | describe reply | User provides description or defers |
@@ -217,16 +213,16 @@ Active minutes are computed from **event gaps**, not wall-clock time:
 // In stateMachine.onActivity():
 if (m.lastActivityAt !== null) {
   const gap = now - m.lastActivityAt;
-  if (gap < th.idleGap) {        // idleGap default: 5 min
-    m.activeMinutes += gap;       // only count gaps < 5 min
+  if (gap < th.idleGap) {        // idleGap default: 15 min
+    m.activeMinutes += gap;       // only count gaps < 15 min
   }
 }
 m.lastActivityAt = now;
 ```
 
 This means:
-- If you type continuously with <5 min between events, every millisecond counts
-- If you step away for 10 minutes, that gap is **not** counted
+- If you type continuously with <15 min between events, every millisecond counts
+- If you step away for 20 minutes, that gap is **not** counted — unless you confirm "still working", which counts it as active but outside VS Code
 - If you step away for 3 hours, the session stays open but accrues 0 active minutes during that time
 - After 2h idle (`autoEndIdle`), the session auto-closes with `endedAt = lastActivityAt`
 
@@ -269,15 +265,9 @@ sequenceDiagram
         end
     else No existing session
         SM->>SS: newSession(wsKey, wsName, now)
-        SM->>PC: askStart(session, previous?)
-        PC->>User: "Work in <workspace>? Start a session?"
-        User-->>PC: "Start" / "Continue yesterday's" / "No"
-        alt Start or Continue
-            SM->>FSM: startSession(machine, now) → active
-        else No
-            SM->>FSM: state = 'untracked'
-            Note over SM: Will nudge once at 30min
-        end
+        SM->>PC: describeShutdownSession (optional, if last ended on close)
+        SM->>FSM: startSession(machine, now) → active
+        Note over SM: Always auto-start — never untracked
     end
 
     Note over VSCode,User: Active Session
@@ -432,7 +422,7 @@ flowchart TD
     START["VS Code starts / workspace opens"] --> LOAD["SessionStore.loadActive(wsKey)"]
     LOAD --> EXISTS{Session exists?}
 
-    EXISTS -->|No| ASK["PromptCoordinator.askStart()"]
+    EXISTS -->|No| NEW["createSession + startSession → active<br/>always auto-start"]
     EXISTS -->|Yes| CHECK["Check idle duration"]
 
     CHECK --> IDLE2H{idle >= 2h?}
@@ -440,14 +430,12 @@ flowchart TD
     IDLE2H -->|No| IDLE30M{idle < 30min?}
 
     IDLE30M -->|Yes| RESUME["Resume session<br/>Reset lastActivityAt to now<br/>(avoid gap accrual)"]
-    IDLE30M -->|No| CONTINUE["Continue session<br/>Gap uncounted<br/>(30min to 2h idle)"]
+    IDLE30M -->|No| RECOV_SKIP["Auto-close as recovery-skip<br/>then start fresh"]
 
     AUTOCLOSE --> IDLE["state = idle"]
     RESUME --> ACTIVE["state = active"]
-    CONTINUE --> ACTIVE
-    ASK --> STARTED{User starts?}
-    STARTED -->|Yes| ACTIVE
-    STARTED -->|No| UNTRACKED["state = untracked"]
+    RECOV_SKIP --> ACTIVE
+    NEW --> ACTIVE
 ```
 
 ### Recovery Guarantees

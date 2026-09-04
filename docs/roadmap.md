@@ -20,7 +20,7 @@
 The current implementation (v0.1.0) includes:
 
 - ✅ **Automatic event capture** — edits, saves, terminal, file ops, debug, tasks
-- ✅ **Session state machine** — idle → untracked → active → describePending → wrapPending → grace
+- ✅ **Session state machine** — idle → active → describePending → wrapPending → grace
 - ✅ **Gap-based active time** — idle gaps not counted
 - ✅ **Breakpoint-aligned prompts** — describe at 90min, wrap at 3.5h
 - ✅ **JSONL append-only storage** — crash-safe, human-readable

@@ -48,7 +48,7 @@ lalog/
 │   │   ├── activityTracker.ts # VS Code event listener
 │   │   ├── breakpoints.ts     # Natural breakpoint detector
 │   │   ├── config.ts          # Settings + thresholds
-│   │   ├── recovery.ts        # Machine rebuild from snapshot
+│   │   ├── spans.ts           # Active-span builder (updateActiveSpan)
 │   │   └── types.ts           # Shared types
 │   ├── prompts/
 │   │   ├── promptCoordinator.ts # Mutex + spacing

@@ -426,7 +426,6 @@ thresholdsMs(cfg) → {
   hardSplit: 300 * 60 * 1000 / scale,      // 5h hard limit
   autoEndIdle: 120 * 60 * 1000 / scale,
   resumeWindow: 30 * 60 * 1000 / scale,
-  untrackedNudge: 30 * 60 * 1000 / scale,
   maxGraceExtensions: 3,
 }
 ```

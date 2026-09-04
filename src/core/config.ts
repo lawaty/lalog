@@ -82,7 +82,6 @@ export interface ThresholdsMs {
   hardSplit: number;
   autoEndIdle: number;
   resumeWindow: number;
-  untrackedNudge: number;
   /** Not a duration — max free 'extend' choices before description is required. */
   maxGraceExtensions: number;
 }
@@ -101,7 +100,6 @@ export function thresholdsMs(cfg: LaLogConfig): ThresholdsMs {
     hardSplit: m(300),
     autoEndIdle: m(cfg.autoEndAfterIdleMinutes),
     resumeWindow: m(cfg.resumeWindowMinutes),
-    untrackedNudge: m(30),
     maxGraceExtensions: Math.max(1, cfg.maxGraceExtensions),
   };
 }

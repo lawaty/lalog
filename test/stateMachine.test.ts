@@ -16,7 +16,6 @@ const th: ThresholdsMs = {
   hardSplit: 300 * MIN,
   autoEndIdle: 120 * MIN,
   resumeWindow: 30 * MIN,
-  untrackedNudge: 30 * MIN,
   maxGraceExtensions: 3,
 };
 
