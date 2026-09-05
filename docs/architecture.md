@@ -107,7 +107,7 @@ flowchart TB
 | **storage/** | `sessionStore.ts`, `store.ts` | Session CRUD, JSONL append, atomic snapshots, filesystem primitives |
 | **reporting/** | `aggregate.ts`, `report.ts`, `spans.ts` | Today's active/untracked time, session-centric markdown reports, in/out-of-VS-Code split |
 | **integrations/** | `git.ts`, `legacyExport.ts` | Git branch/commit annotation, legacy `files_by_day.txt` export |
-| **ui/** | `statusBar.ts`, `sessionsView.ts`, `nowView.ts` | Status bar (live duration + description), tree view (sessions grouped by day with per-session detail rows), pinned "Now" webview card (clock + session + pause/resume/end, ticks every second) |
+| **ui/** | `statusBar.ts`, `panelView.ts` | Status bar (live duration + description), single webview panel (scrollable sessions grouped by day, with the "Now" card as a fixed non-scrolling footer) |
 
 ---
 

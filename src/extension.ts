@@ -3,8 +3,7 @@ import { readConfig, thresholdsMs, readAiConfig, AiConfig } from './core/config'
 import { SessionManager } from './core/sessionManager';
 import { SessionStore } from './storage/sessionStore';
 import { buildPaths, ensureDirs, LaLogPaths } from './storage/store';
-import { SessionsTreeProvider, SessionTreeItem } from './ui/sessionsView';
-import { NowViewProvider } from './ui/nowView';
+import { LaLogPanelProvider } from './ui/panelView';
 import { LaLogStatusBar } from './ui/statusBar';
 import { todayActiveMs, todayUntrackedMs } from './reporting/aggregate';
 import { generateReport, ReportRange, saveReport, rangeStart, rangeEnd, rangeLabel } from './reporting/report';
@@ -54,23 +53,25 @@ export function activate(context: vscode.ExtensionContext): void {
       : undefined
   );
 
-  const treeProvider = new SessionsTreeProvider(async () => store.loadAll(), th);
   const statusBar = new LaLogStatusBar(() => {
     void commands.quickActions();
   });
 
-  // Recompute status bar on state changes.
+  // Recompute status bar + panel on state changes.
   manager.setOnStateChanged(() => {
     void refreshStatus();
   });
 
   let cachedTodayMs = 0;
-  const nowView = new NowViewProvider(() => ({
-    session: manager.getSession(),
-    todayActiveMs: cachedTodayMs,
-    paused: manager.isPaused(),
-    idleGap: th.idleGap,
-  }));
+  const panel = new LaLogPanelProvider(
+    () => store.loadAll(),
+    () => manager.getSession(),
+    () => ({
+      todayActiveMs: cachedTodayMs,
+      paused: manager.isPaused(),
+      idleGap: th.idleGap,
+    })
+  );
 
   async function refreshStatus(): Promise<void> {
     const all = await store.loadAll();
@@ -83,6 +84,7 @@ export function activate(context: vscode.ExtensionContext): void {
       todayUntrackedMs(all, now),
       manager.isPaused()
     );
+    panel.refresh();
   }
 
   const commands = {
@@ -270,7 +272,7 @@ export function activate(context: vscode.ExtensionContext): void {
         needsDescription: !text,
         notes,
       });
-      treeProvider.refresh();
+      panel.refresh();
     }
   });
 
@@ -282,23 +284,15 @@ export function activate(context: vscode.ExtensionContext): void {
     );
   });
 
-  // Sidebar view registration.
-  const viewId = 'lalog.sessionsView';
-  const treeView = vscode.window.createTreeView(viewId, {
-    treeDataProvider: treeProvider,
-  });
-  context.subscriptions.push(treeView);
-  treeProvider.refresh();
-
-  const nowViewId = NowViewProvider.viewType;
+  // Sidebar panel: sessions list + fixed "Now" box at the bottom (single
+  // webview view — a standalone second view would get its own resize divider).
   context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider(nowViewId, nowView)
+    vscode.window.registerWebviewViewProvider(LaLogPanelProvider.viewType, panel)
   );
-
-  context.subscriptions.push(manager, statusBar, nowView);
+  context.subscriptions.push(manager, statusBar, panel);
 
   // Keep the "today" figure fresh even when idle (no state changes to trigger
-  // refreshStatus) — the Now clock ticks regardless, from the provider's timer.
+  // refreshStatus). The Now clock ticks client-side in the webview regardless.
   const todayRefresh = setInterval(() => void refreshStatus(), 60 * 1000);
   context.subscriptions.push({ dispose: () => clearInterval(todayRefresh) });
 

@@ -288,7 +288,7 @@ vsce publish
 
 - **Unit tests** for pure logic (state machine, config, aggregation)
 - **Integration tests** for storage (JSONL read/write, snapshot recovery)
-- **Manual tests** for UI (prompts, status bar, tree view)
+- **Manual tests** for UI (prompts, status bar, webview panel)
 
 The current test suite (`test/stateMachine.test.ts`) uses Node's built-in test runner (`node:test`). Tests are synchronous and fast.
 

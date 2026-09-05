@@ -155,13 +155,7 @@
     },
     "views": {
       "lalog": [
-        { "id": "lalog.sessionsView", "name": "Sessions" },
-        { "type": "webview", "id": "lalog.nowView", "name": "Now" }
-      ]
-    },
-    "menus": {
-      "view/item/context": [
-        { "command": "lalog.editSession", "when": "view == lalog.sessionsView", "group": "inline" }
+        { "type": "webview", "id": "lalog.sessionsView", "name": "Sessions" }
       ]
     }
   },

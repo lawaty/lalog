@@ -278,12 +278,10 @@ Left-aligned status bar item (priority 100):
 
 ### Sessions View (Sidebar)
 
-Tree view in the activity bar (LaLog icon), grouped by start-date day (newest first):
+One webview panel in the activity bar (LaLog icon), grouped by start-date day (newest first). The sessions list scrolls; the **Now** box below it is fixed at the bottom of the panel and never moves:
 
 ```
 ┌──────────────────────────────────────────┐
-│ SESSIONS                                 │
-│                                          │
 │ ▼ 2026-09-03 — 3 sessions, 5h            │
 │   ▼ 10:00 · my-project — Fix login bug   │
 │      Fix login bug                       │
@@ -295,17 +293,22 @@ Tree view in the activity bar (LaLog icon), grouped by start-date day (newest fi
 │      ▼ 2 notes                           │
 │      git fix/login · 2 commits           │
 │   09:00 · other-project                  │
+│  ┌────────────────────────────────────┐  │
+│  │ my-project · Fix login bug   ●     │  │
+│  │ 10:32:05 · active 1h 40m · 5h today│  │
+│  │ [ Pause ] [ End ]                  │  │
+│  └────────────────────────────────────┘  │
 └──────────────────────────────────────────┘
 ```
 
 - Session items show: start time, workspace, description (or "needs description"); warning icon for sessions needing description
 - Expand a session to see its full detail: description, active vs outside-VS-Code time split (from `splitActiveMinutes`), type, closed reason, time range, per-kind event counters, top files, the timestamped notes timeline, and git branch/commits
 - Files and notes expand into rows (file → edit count; note → timestamped text)
-- Click a session row → `lalog.editSession` command
+- Each session has an ✎ button → `lalog.editSession` command
 
-### Now Box (pinned below Sessions)
+### Now Box (fixed at the bottom of the panel)
 
-The second view, **Now**, is a small card pinned at the bottom of the panel, styled like a chat input box. A session is **always** running, so the box never has a "Start" — its controls only pause/resume/end the always-on tracking. It updates every second:
+The **Now** card is a non-scrolling footer at the bottom of the same panel, styled like a chat prompt box — Copilot keeps its input pinned the same way (one view, footer outside the scroll area). Because it's part of the single panel view, it has no resize divider and never moves. A session is **always** running, so the box never has a "Start" — its controls only pause/resume/end the always-on tracking. It updates every second:
 
 - **Session** — workspace name and its description (or a "(no description yet)" placeholder)
 - **Clock** — live wall clock plus the session's active duration (capped at the idle gap, so it doesn't creep while you're away) and today's tracked total
