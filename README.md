@@ -10,11 +10,11 @@ It started as a personal tool and is shaped entirely by real use: no accounts, n
 
 You open VS Code and just work. LaLog handles the rest:
 
-- **Sessions, not timers.** Opening a workspace starts tracking automatically — you are never "untracked." A session is a continuous thread, bounded by idle time rather than the clock: an overnight run from 22:00 to 02:00 is one session.
+- **Sessions, not timers.** Opening a workspace starts tracking automatically — you are never "untracked." If a session ends (auto-close, manual end) and you keep working, a fresh one starts silently at the next event. A session is a continuous thread, bounded by idle time rather than the clock: an overnight run from 22:00 to 02:00 is one session.
 - **Active-only time.** A session's duration is the sum of its active moments and spans, never `end − start` wall-clock. Idle gaps don't count. If you pop away from your desk and confirm you were actually "still working," that time is counted separately as *outside VS Code*.
 - **Descriptions at the right moments.** An optional prompt when a session starts ("what are you working on?"), a longer one around the 90-minute mark, periodic progress notes every hour if you keep going, and a closing note when you wrap up. Every entry is a timestamped note on the session.
 - **A real drill-down UI.** The sidebar groups sessions by day; expand any session to see its description, active vs. outside-VS-Code split, per-kind event counters, top files, the note timeline, and the git branch and commits made during it.
-- **Stops on its own.** "Are you still there?" fires after 15 idle minutes so outside-editor work isn't lost — and abandoned sessions auto-close after ~2 hours instead of accumulating phantom time.
+- **Stops on its own.** "Are you still there?" fires after 15 idle minutes so outside-editor work isn't lost — and abandoned sessions auto-close after ~2 hours instead of accumulating phantom time. Come back, type one key, and a fresh session picks up where it left off.
 - **Optional AI, off by default.** When enabled, a local `opencode` CLI drafts descriptions, writes report narratives, and reviews your work. It only ever sees the compact session summary (file paths, counters, branch, commit subjects) — never file contents or terminal output.
 
 ## How it looks

@@ -28,6 +28,7 @@ A **session** represents a continuous engagement thread with a workspace. Sessio
 
 - **NOT day-bound** — an overnight coding session from 22:00 to 02:00 is a single session
 - **Bounded only by idle** — auto-close triggers after ~2h of no activity
+- **Always monitored** — events are never dropped: if a session ended (auto-close, manual end) and activity resumes, a fresh session starts silently at the next event
 - **Workspace-scoped** — each workspace folder has its own session track
 - **Persistent** — active sessions are snapshotted every 60s and on every state change
 
@@ -44,6 +45,7 @@ A **session** represents a continuous engagement thread with a workspace. Sessio
 6. **Wrap prompt** — after ~3.5h active minutes, prompt to wrap or extend
 7. **Idle check** — after `idleConfirmAfterMinutes` (15) of no activity, "Are you still there?"; confirming keeps the span open (counted outside VS Code), ending or ignoring stops/skips
 8. **End** — user ends manually, VS Code closes (`vscode-shutdown`), or auto-close after 2h idle
+9. **Auto-restart** — any event that arrives with no open session (after a manual end or auto-idle close) silently starts a fresh session, so work is tracked even if every description/update prompt was skipped
 
 ### Auto-Start on Open
 
@@ -210,6 +212,7 @@ Every description and progress update is recorded as a timestamped **note** in `
 | **Progress update** | Every `progressAfterMinutes` (default 60) of *active* minutes, while in `active`/`grace` state | Note (becomes the description if none exists) |
 | **Describe checkpoint** | After ~90 active minutes | Description + note |
 | **Wrap close note** | Choosing "Wrap session & start a new one" | Note on the closed session |
+| **Auto-idle return note** | Resuming after an auto-close left a session undescribed | Note on the ended session |
 | **End-command close note** | `lalog.endSession` / "No, end this session" on the idle check | Note on the closed session (becomes the description if none exists) |
 | **Manual edit** | `lalog.editSession` (session row click) | Note only when the description changes |
 

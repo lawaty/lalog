@@ -132,6 +132,58 @@ export class SessionManager implements vscode.Disposable {
     this.onStateChanged();
   }
 
+  /**
+   * Guarantee a tracked session on every event. Runs when a previous session
+   * ended without a replacement (auto-idle close, manual end): the new session
+   * starts silently at this event so work is recorded regardless of whether the
+   * start/return description is answered. Events are never dropped.
+   */
+  private ensureSessionOnActivity(now: number): void {
+    if (this.session) return;
+    const ws = this.currentWorkspaceKey();
+    if (!ws) return;
+    const wsKey = workspaceKey(ws.key);
+    this.session = this.store.newSession(wsKey, ws.name, now);
+    this.machine = newMachine();
+    startSession(this.machine, now);
+    this.openSpanStart = null;
+    this.lastProgressActiveMin = 0;
+    this.firstActivityAfterOpen = true; // recovery branch resets lastActivityAt to this event
+    if (this.pendingClose) {
+      this.offerPendingCloseNote();
+    } else if (this.askDescriptionOnStart) {
+      const s = this.session;
+      void this.prompts.askSessionStart(s).then((desc) => {
+        if (desc && this.session === s) void this.applyStartDescription(desc);
+      });
+    }
+    this.scheduleSave();
+    this.onStateChanged();
+  }
+
+  /** Optional closing note for a session that auto-idle-ended while the user was away. */
+  private offerPendingCloseNote(): void {
+    const closed = this.pendingClose;
+    this.pendingClose = null;
+    if (!closed || closed.description) return;
+    void this.prompts.askClosingNote(closed).then((note) => {
+      const text = (note ?? '').trim();
+      closed.notes.push({ at: Date.now(), text });
+      if (text) {
+        closed.description = text;
+        closed.needsDescription = false;
+      } else {
+        closed.needsDescription = !closed.description;
+      }
+      void this.store.updateSession(closed.id, {
+        description: closed.description,
+        needsDescription: closed.needsDescription,
+        notes: closed.notes,
+      });
+      this.onStateChanged();
+    });
+  }
+
   /** Tiny cache to distinguish "just resumed, don't accrue a gap" when the session loads. */
   private activityPeek = 0;
   private firstActivityAfterOpen = true;
@@ -145,9 +197,12 @@ export class SessionManager implements vscode.Disposable {
   private lastProgressActiveMin = 0;
   /** Guard against stacking progress-update prompts. */
   private progressPromptOpen = false;
+  /** An auto-idled session awaiting an optional closing note on the next activity. */
+  private pendingClose: Session | null = null;
 
   private onActivityEvent(ev: TrackedEvent, filePath?: string, now?: number): void {
     const ts = now ?? Date.now();
+    if (!this.session) this.ensureSessionOnActivity(ts);
     if (!this.session) return;
 
     // Recovery: first event after open should not accrue a giant gap.
@@ -420,6 +475,9 @@ export class SessionManager implements vscode.Disposable {
     this.closeOpenSpanAt(ended.endedAt);
     s.activeMinutes = ended.activeMinutes;
     await this.store.close(s, reason, ended.endedAt);
+    // Auto-idle sessions closed while the user was away get an optional closing
+    // note offered on the next activity (the user wasn't present to answer now).
+    if (reason === 'auto-idle') this.pendingClose = s;
     this.clearForceTimers();
     this.session = null;
     this.machine = newMachine();
