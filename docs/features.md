@@ -52,19 +52,19 @@ A **session** represents a continuous engagement thread with a workspace. Sessio
 Opening a workspace with no active session starts tracking immediately — there is no "untracked" state. Two optional pre-session dialogs may appear before work begins (both dismissible with Esc):
 
 1. **Shutdown recovery** — if the previous session was ended by VS Code closing without a description, an optional description prompt appears
-2. **On-start description** (`lalog.askDescriptionOnStart`, default on) — a short "what are you working on?" prompt. If a previous session exists, its description prefills the box (press Enter to continue the same thread):
+2. **On-start description** (`lalog.askDescriptionOnStart`, default on) — a short "what are you working on?" prompt offered **a few minutes in** (`lalog.startDescriptionAfterMinutes`, default 5) rather than immediately, so it never interrupts the first thing you do. It fires once and only if no description has been added yet:
 
 ```
 ┌─────────────────────────────────────────┐
 │  Session started · "my-project"         │
 │  — what are you working on?             │
 │                                         │
-│  [continue working on the login flow]   │
+│  [type what you're doing]               │
 │  Optional · Esc to skip                 │
 └─────────────────────────────────────────┘
 ```
 
-The accepted text becomes the session description and an initial timestamped note. Nothing is ever left untracked — all work is recorded.
+If it's skipped, the session keeps tracking anyway and can be described later (describe checkpoint, progress note, or the sessions view). Nothing is ever left untracked — all work is recorded.
 
 ### Auto-Assignment to Explicit Session
 
@@ -208,7 +208,7 @@ Every description and progress update is recorded as a timestamped **note** in `
 
 | Prompt | When | Recorded as |
 |--------|------|-------------|
-| **On-start description** | Session starts (`askDescriptionOnStart`, default on) | Description + note |
+| **On-start description** | `startDescriptionAfterMinutes` (5) into the session, once, if none added yet | Description + note |
 | **Progress update** | Every `progressAfterMinutes` (default 60) of *active* minutes, while in `active`/`grace` state | Note (becomes the description if none exists) |
 | **Describe checkpoint** | After ~90 active minutes | Description + note |
 | **Wrap close note** | Choosing "Wrap session & start a new one" | Note on the closed session |
@@ -432,6 +432,7 @@ All settings are under `lalog.*` in VS Code settings (`settings.json`).
 | `lalog.maxGraceExtensions` | number | `3` | Max free "Extend" choices before description required |
 | `lalog.idleGapMinutes` | number | `15` | Gap between events that still counts as active |
 | `lalog.idleConfirmAfterMinutes` | number | `15` | Idle before the "Are you still there?" check fires (confirmed idle counts as active outside VS Code) |
+| `lalog.startDescriptionAfterMinutes` | number | `5` | Delay before offering the optional on-start description (once, only if none added yet) |
 | `lalog.progressAfterMinutes` | number | `60` | Active minutes between periodic progress-update prompts (timestamped notes) |
 | `lalog.askDescriptionOnStart` | boolean | `true` | Ask for a short description when a session starts |
 | `lalog.autoEndAfterIdleMinutes` | number | `120` | Idle time before auto-close (2h). Sessions are not day-bound; this is the only boundary |
@@ -448,6 +449,7 @@ All time settings are resolved to milliseconds with `debugTimeScale` applied:
 thresholdsMs(cfg) → {
   idleGap: 15 * 60 * 1000 / scale,
   idleConfirm: 15 * 60 * 1000 / scale,
+  startDescAt: 5 * 60 * 1000 / scale,      // on-start description, 5 min in
   describeAt: 90 * 60 * 1000 / scale,
   describeForce: 120 * 60 * 1000 / scale,  // describeAt + 30min
   wrapAt: 210 * 60 * 1000 / scale,
