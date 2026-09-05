@@ -38,7 +38,7 @@ A **session** represents a continuous engagement thread with a workspace. Sessio
    - Idle ≥ 2h → auto-close (endedAt = lastActivityAt), offer closing note
    - Idle < 30min → resume session (reset lastActivityAt to avoid gap accrual)
    - 30min ≤ idle < 2h → auto-close as `recovery-skip`; a fresh session starts
-3. **New session** — if no snapshot exists, tracking **auto-starts** (never untracked). If the previous session was ended by VS Code closing, an optional description prompt appears
+3. **New session** — if no snapshot exists, tracking **auto-starts** (never untracked). An optional on-start description prompt records what you're working on (`lalog.askDescriptionOnStart`); if the previous session was ended by VS Code closing, its description is offered first
 4. **Active tracking** — events accrue active time gap-based; each contiguous run is a span; confirmed-idle time extends a span classified as *outside VS Code*
 5. **Describe prompt** — after ~90 active minutes, prompt at natural breakpoint
 6. **Wrap prompt** — after ~3.5h active minutes, prompt to wrap or extend
@@ -47,22 +47,22 @@ A **session** represents a continuous engagement thread with a workspace. Sessio
 
 ### Auto-Start on Open
 
-Opening a workspace with no active session starts tracking immediately — there is no "untracked" state and no start prompt. The description prompt (if the previous session was cut short by VS Code closing) is the only pre-session dialog, and it's optional:
+Opening a workspace with no active session starts tracking immediately — there is no "untracked" state. Two optional pre-session dialogs may appear before work begins (both dismissible with Esc):
+
+1. **Shutdown recovery** — if the previous session was ended by VS Code closing without a description, an optional description prompt appears
+2. **On-start description** (`lalog.askDescriptionOnStart`, default on) — a short "what are you working on?" prompt. If a previous session exists, its description prefills the box (press Enter to continue the same thread):
 
 ```
 ┌─────────────────────────────────────────┐
-│  Describe your last session in          │
-│  "my-project" (2h 15m active)           │
+│  Session started · "my-project"         │
+│  — what are you working on?             │
 │                                         │
-│  optional — e.g. "fixed the payment     │
-│  parsing bug"                           │
-│  It was ended when VS Code closed.      │
+│  [continue working on the login flow]   │
 │  Optional · Esc to skip                 │
 └─────────────────────────────────────────┘
 ```
 
-- If a previous session exists for this workspace, its description/type seed the new session
-- Nothing is ever left untracked — all work is recorded
+The accepted text becomes the session description and an initial timestamped note. Nothing is ever left untracked — all work is recorded.
 
 ### Auto-Assignment to Explicit Session
 
@@ -200,6 +200,21 @@ Prompts are **not** delivered on fixed timers. They are held until a natural bre
 
 This ensures prompts don't interrupt flow — they arrive when you're already pausing.
 
+### Session Notes Timeline
+
+Every description and progress update is recorded as a timestamped **note** in `session.notes[]`, forming an automatic timeline per session:
+
+| Prompt | When | Recorded as |
+|--------|------|-------------|
+| **On-start description** | Session starts (`askDescriptionOnStart`, default on) | Description + note |
+| **Progress update** | Every `progressAfterMinutes` (default 60) of *active* minutes, while in `active`/`grace` state | Note (becomes the description if none exists) |
+| **Describe checkpoint** | After ~90 active minutes | Description + note |
+| **Wrap close note** | Choosing "Wrap session & start a new one" | Note on the closed session |
+| **End-command close note** | `lalog.endSession` / "No, end this session" on the idle check | Note on the closed session (becomes the description if none exists) |
+| **Manual edit** | `lalog.editSession` (session row click) | Note only when the description changes |
+
+Each note stores `{ at: <epoch ms>, text }`. Skipping a progress prompt (Esc) re-arms the timer for another full window instead of nagging. The full timeline is visible in the sessions view.
+
 ---
 
 ## Storage & Persistence
@@ -209,7 +224,7 @@ This ensures prompts don't interrupt flow — they arrive when you're already pa
 Closed sessions are appended to `~/.lalog/sessions.jsonl`:
 
 ```jsonl
-{"id":"20260903-2200-a1b2-c3d4","workspaceKey":"abc1234567","workspaceName":"my-project","startedAt":1725397200000,"endedAt":1725404400000,"lastActivityAt":1725404400000,"activeMinutes":5700000,"activeSpans":[{"start":1725397200000,"end":1725400800000}],"activityTs":[1725397200000,1725397800000,1725400200000,1725400800000],"type":"feature","description":"Fix login bug","notes":[],"needsDescription":false,"events":{"edits":142,"saves":23,"terminal":8,"topFiles":[...]},"gitBranch":"fix/login","commits":[{"hash":"a1b2c3d","subject":"Fix login validation"}],"closedReason":"user"}
+{"id":"20260903-2200-a1b2-c3d4","workspaceKey":"abc1234567","workspaceName":"my-project","startedAt":1725397200000,"endedAt":1725404400000,"lastActivityAt":1725404400000,"activeMinutes":5700000,"activeSpans":[{"start":1725397200000,"end":1725400800000}],"activityTs":[1725397200000,1725397800000,1725400200000,1725400800000],"type":"feature","description":"Fix login bug","notes":[{"at":1725400800000,"text":"wired up the fix"}],"needsDescription":false,"events":{"edits":142,"saves":23,"terminal":8,"fileops":11,"tasks":3,"debug":2,"topFiles":[...]},"gitBranch":"fix/login","commits":[{"hash":"a1b2c3d","subject":"Fix login validation"}],"closedReason":"user"}
 ```
 
 - **Append-only** — no read-modify-write for normal operation
@@ -260,28 +275,30 @@ Left-aligned status bar item (priority 100):
 
 ### Sessions View (Sidebar)
 
-Tree view in the activity bar (LaLog icon):
+Tree view in the activity bar (LaLog icon), grouped by start-date day (newest first):
 
 ```
-┌─────────────────────────────────┐
-│ SESSIONS                        │
-│                                 │
-│ ▼ 2026-09-03 — 3 sessions, 5h  │
-│   14:30 · my-project — Fix...   │
-│   10:00 · my-project — Res...   │
-│   09:00 · my-project            │
-│                                 │
-│ ▼ 2026-09-02 — 2 sessions, 3h  │
-│   15:00 · other-project         │
-│   09:00 · other-project — ...   │
-└─────────────────────────────────┘
+┌──────────────────────────────────────────┐
+│ SESSIONS                                 │
+│                                          │
+│ ▼ 2026-09-03 — 3 sessions, 5h            │
+│   ▼ 10:00 · my-project — Fix login bug   │
+│      Fix login bug                       │
+│      Active 2h 30m · in VS Code 2h 20m   │
+│      feature · user · started 10:00      │
+│      edits 142 · saves 23 · terminal 8 · │
+│      file ops 11 · tasks 3 · debug 2     │
+│      ▼ 3 files worked on                 │
+│      ▼ 2 notes                           │
+│      git fix/login · 2 commits           │
+│   09:00 · other-project                  │
+└──────────────────────────────────────────┘
 ```
 
-- Sessions grouped by start-date day (newest first)
-- Day headers show session count and total duration
-- Session items show: start time, workspace name, description (or "needs description")
-- Warning icon (⚠) for sessions needing description, check icon (✓) for described sessions
-- Click session → `lalog.editSession` command
+- Session items show: start time, workspace, description (or "needs description"); warning icon for sessions needing description
+- Expand a session to see its full detail: description, active vs outside-VS-Code time split (from `splitActiveMinutes`), type, closed reason, time range, per-kind event counters, top files, the timestamped notes timeline, and git branch/commits
+- Files and notes expand into rows (file → edit count; note → timestamped text)
+- Click a session row → `lalog.editSession` command
 
 ### Quick Actions Menu
 
@@ -404,6 +421,8 @@ All settings are under `lalog.*` in VS Code settings (`settings.json`).
 | `lalog.maxGraceExtensions` | number | `3` | Max free "Extend" choices before description required |
 | `lalog.idleGapMinutes` | number | `15` | Gap between events that still counts as active |
 | `lalog.idleConfirmAfterMinutes` | number | `15` | Idle before the "Are you still there?" check fires (confirmed idle counts as active outside VS Code) |
+| `lalog.progressAfterMinutes` | number | `60` | Active minutes between periodic progress-update prompts (timestamped notes) |
+| `lalog.askDescriptionOnStart` | boolean | `true` | Ask for a short description when a session starts |
 | `lalog.autoEndAfterIdleMinutes` | number | `120` | Idle time before auto-close (2h). Sessions are not day-bound; this is the only boundary |
 | `lalog.resumeWindowMinutes` | number | `30` | Recovery: if last activity was within this window on restart, offer resume |
 | `lalog.debugTimeScale` | number | `1` | Divide all time thresholds by this factor. Set 60 to test a "4-hour" session in 4 minutes |
@@ -424,6 +443,7 @@ thresholdsMs(cfg) → {
   wrapForce: 240 * 60 * 1000 / scale,      // wrapAt + 30min
   grace: 30 * 60 * 1000 / scale,
   hardSplit: 300 * 60 * 1000 / scale,      // 5h hard limit
+  progressAt: 60 * 60 * 1000 / scale,      // periodic progress notes
   autoEndIdle: 120 * 60 * 1000 / scale,
   resumeWindow: 30 * 60 * 1000 / scale,
   maxGraceExtensions: 3,

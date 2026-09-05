@@ -4,6 +4,7 @@ import { Session } from '../core/types';
 import { Machine } from '../core/stateMachine';
 import { BreakpointKind } from '../core/breakpoints';
 import { runDescribeFlow, DescribeResult } from './describeFlow';
+import { buildPrefill } from './describeFlow';
 
 export type WrapResult =
   | { choice: 'wrap-new' }
@@ -107,6 +108,57 @@ export class PromptCoordinator {
         value: session.description ?? '',
         placeHolder: 'optional — e.g. "fixed the payment parsing bug"',
         prompt: 'It was ended when VS Code closed. Optional · Esc to skip — add later from sessions view.',
+        ignoreFocusOut: true,
+      });
+      return text === undefined ? null : text.trim() ? text.trim() : null;
+    } finally {
+      this.release();
+    }
+  }
+
+  /** Optional description recorded when a session starts. `prefill` may seed continuity from a previous session. */
+  async askSessionStart(session: Session, prefill?: string): Promise<string | null> {
+    if (!(await this.acquire())) return null;
+    try {
+      const text = await vscode.window.showInputBox({
+        title: `Session started · ${session.workspaceName} — what are you working on?`,
+        value: prefill ?? buildPrefill(session),
+        placeHolder: 'e.g. "wire up the payment parsing bug"',
+        prompt: 'Optional · Esc to skip — add later from the sessions view.',
+        ignoreFocusOut: true,
+      });
+      return text === undefined ? null : text.trim() ? text.trim() : null;
+    } finally {
+      this.release();
+    }
+  }
+
+  /** Periodic progress check — records a timestamped note every progressAt active minutes. */
+  async askProgressUpdate(session: Session): Promise<string | null> {
+    if (!(await this.acquire())) return null;
+    try {
+      const text = await vscode.window.showInputBox({
+        title: `Progress update · ${session.workspaceName}`,
+        value: buildPrefill(session),
+        placeHolder: 'what happened in the last hour?',
+        prompt: 'Optional · Esc to skip — logged as a note with the current time.',
+        ignoreFocusOut: true,
+      });
+      return text === undefined ? null : text.trim() ? text.trim() : null;
+    } finally {
+      this.release();
+    }
+  }
+
+  /** Optional closing note recorded when an explicitly-ended session wraps up. */
+  async askSessionClose(session: Session): Promise<string | null> {
+    if (!(await this.acquire())) return null;
+    try {
+      const text = await vscode.window.showInputBox({
+        title: `Session wrapped · ${session.workspaceName} — what did you get done?`,
+        value: session.description ?? '',
+        placeHolder: 'e.g. "payment bug fixed, all tests green"',
+        prompt: 'Optional · Esc to skip — add later from the sessions view.',
         ignoreFocusOut: true,
       });
       return text === undefined ? null : text.trim() ? text.trim() : null;

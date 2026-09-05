@@ -9,6 +9,8 @@ export interface LaLogConfig {
   maxGraceExtensions: number;
   idleGapMinutes: number;
   idleConfirmAfterMinutes: number;
+  progressAfterMinutes: number;
+  askDescriptionOnStart: boolean;
   autoEndAfterIdleMinutes: number;
   resumeWindowMinutes: number;
   debugTimeScale: number;
@@ -24,6 +26,8 @@ const DEFAULTS: LaLogConfig = {
   maxGraceExtensions: 3,
   idleGapMinutes: 15,
   idleConfirmAfterMinutes: 15,
+  progressAfterMinutes: 60,
+  askDescriptionOnStart: true,
   autoEndAfterIdleMinutes: 120,
   resumeWindowMinutes: 30,
   debugTimeScale: 1,
@@ -80,6 +84,7 @@ export interface ThresholdsMs {
   wrapForce: number;
   grace: number;
   hardSplit: number;
+  progressAt: number;
   autoEndIdle: number;
   resumeWindow: number;
   /** Not a duration — max free 'extend' choices before description is required. */
@@ -98,6 +103,7 @@ export function thresholdsMs(cfg: LaLogConfig): ThresholdsMs {
     wrapForce: m(cfg.wrapAfterMinutes + 30),
     grace: m(cfg.graceMinutes),
     hardSplit: m(300),
+    progressAt: m(cfg.progressAfterMinutes),
     autoEndIdle: m(cfg.autoEndAfterIdleMinutes),
     resumeWindow: m(cfg.resumeWindowMinutes),
     maxGraceExtensions: Math.max(1, cfg.maxGraceExtensions),

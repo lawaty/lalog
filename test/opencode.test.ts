@@ -32,7 +32,7 @@ function makeSession(): Session {
     description: 'building auth',
     notes: [],
     needsDescription: false,
-    events: { edits: 12, saves: 4, terminal: 2, topFiles: [{ path: '/x/a.ts', edits: 8, firstTouch: 0, lastTouch: 0 }] },
+    events: { edits: 12, saves: 4, terminal: 2, fileops: 1, tasks: 1, debug: 1, topFiles: [{ path: '/x/a.ts', edits: 8, firstTouch: 0, lastTouch: 0 }] },
     gitBranch: 'feat/auth',
     commits: [{ hash: 'abc123', subject: 'Add login flow' }],
   };

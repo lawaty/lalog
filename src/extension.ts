@@ -21,7 +21,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const th = thresholdsMs(cfg);
 
   const store = new SessionStore({ paths, th });
-  manager = new SessionManager(store, th, paths);
+  manager = new SessionManager(store, th, paths, cfg.askDescriptionOnStart);
 
   const wsFolder = () => vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   // Lazy AI service so that when `lalog.ai.enabled` is false, no opencode code
@@ -53,7 +53,7 @@ export function activate(context: vscode.ExtensionContext): void {
       : undefined
   );
 
-  const treeProvider = new SessionsTreeProvider(async () => store.loadAll());
+  const treeProvider = new SessionsTreeProvider(async () => store.loadAll(), th);
   const statusBar = new LaLogStatusBar(() => {
     void commands.quickActions();
   });
@@ -102,7 +102,7 @@ export function activate(context: vscode.ExtensionContext): void {
   });
 
   registerCommand('lalog.endSession', async () => {
-    const s = await manager.endSession('user');
+    const s = await manager.endSessionWithNote('user');
     if (s) {
       const ws = vscode.workspace.workspaceFolders?.[0];
       if (ws) {
@@ -211,9 +211,15 @@ export function activate(context: vscode.ExtensionContext): void {
       ignoreFocusOut: true,
     });
     if (desc !== undefined) {
+      const text = desc.trim();
+      const notes = [...target.notes];
+      if (text && text !== target.description) {
+        notes.push({ at: Date.now(), text });
+      }
       await store.updateSession(target.id, {
-        description: desc.trim() || undefined,
-        needsDescription: !desc.trim(),
+        description: text || undefined,
+        needsDescription: !text,
+        notes,
       });
       treeProvider.refresh();
     }

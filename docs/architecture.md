@@ -102,12 +102,12 @@ flowchart TB
 
 | Module | Files | Responsibility |
 |--------|-------|----------------|
-| **core/** | `stateMachine.ts`, `sessionManager.ts`, `activityTracker.ts`, `breakpoints.ts`, `config.ts`, `spans.ts`, `types.ts` | Pure state machine, session orchestration, VS Code event capture, breakpoint detection, configuration, active-span arithmetic |
-| **prompts/** | `promptCoordinator.ts`, `describeFlow.ts` | Prompt mutex (one at a time, min spacing), 2-step describe UI (type picker → input box) |
+| **core/** | `stateMachine.ts`, `sessionManager.ts`, `activityTracker.ts`, `breakpoints.ts`, `config.ts`, `spans.ts`, `types.ts` | Pure state machine, session orchestration (idle/progress/auto-end checks), VS Code event capture, breakpoint detection, configuration, active-span arithmetic |
+| **prompts/** | `promptCoordinator.ts`, `describeFlow.ts` | Prompt mutex (one at a time, min spacing), 2-step describe UI (type picker → input box), on-start/progress/close note prompts |
 | **storage/** | `sessionStore.ts`, `store.ts` | Session CRUD, JSONL append, atomic snapshots, filesystem primitives |
-| **reporting/** | `aggregate.ts`, `report.ts` | Today's active/untracked time, session-centric markdown reports |
+| **reporting/** | `aggregate.ts`, `report.ts`, `spans.ts` | Today's active/untracked time, session-centric markdown reports, in/out-of-VS-Code split |
 | **integrations/** | `git.ts`, `legacyExport.ts` | Git branch/commit annotation, legacy `files_by_day.txt` export |
-| **ui/** | `statusBar.ts`, `sessionsView.ts` | Status bar (live duration + description), tree view (sessions grouped by day) |
+| **ui/** | `statusBar.ts`, `sessionsView.ts` | Status bar (live duration + description), tree view (sessions grouped by day with per-session detail rows) |
 
 ---
 

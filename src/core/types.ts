@@ -57,6 +57,9 @@ export interface Session {
     edits: number;
     saves: number;
     terminal: number;
+    fileops: number;
+    tasks: number;
+    debug: number;
     topFiles: FileTouch[]; // top 10, by edit count
   };
   gitBranch?: string;

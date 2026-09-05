@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { ThresholdsMs } from '../core/config';
-import { Session, TrackedEvent, ClosedReason, SessionType } from '../core/types';
+import { Session, TrackedEvent, ClosedReason } from '../core/types';
 import {
   Machine,
   newMachine,
@@ -30,7 +30,8 @@ export class SessionManager implements vscode.Disposable {
   constructor(
     private store: SessionStore,
     private th: ThresholdsMs,
-    private paths: LaLogPaths
+    private paths: LaLogPaths,
+    private askDescriptionOnStart = true
   ) {
     this.prompts = new PromptCoordinator(this.th);
     this.activity = new ActivityTracker(
@@ -87,6 +88,7 @@ export class SessionManager implements vscode.Disposable {
         // Very recent: same continuous session, fast re-open. Resume it.
         this.session = existing;
         this.machine = recoverActiveMachine(existing, now, this.th);
+        this.lastProgressActiveMin = this.machine.activeMinutes;
         this.activityPeek = existing.lastActivityAt;
         this.openSpanStart = null; // next activity opens a fresh span
         this.firstActivityAfterOpen = true;
@@ -108,12 +110,24 @@ export class SessionManager implements vscode.Disposable {
     const previous = await this.lastSessionFor(wsKey);
     this.session = this.store.newSession(wsKey, wsName, now);
     this.machine = newMachine();
-    if (previous?.description) {
-      this.session.description = previous.description;
-      this.session.type = previous.type;
-    }
     startSession(this.machine, now);
+    this.lastProgressActiveMin = 0;
     this.firstActivityAfterOpen = true;
+    if (this.askDescriptionOnStart) {
+      const seed = previous?.description ?? '';
+      const desc = await this.prompts.askSessionStart(this.session, seed);
+      if (desc) await this.applyStartDescription(desc);
+    }
+    this.scheduleSave();
+    this.onStateChanged();
+  }
+
+  /** Record the on-start description as both description and a timestamped note. */
+  private async applyStartDescription(text: string): Promise<void> {
+    if (!this.session) return;
+    this.session.description = text;
+    this.session.needsDescription = false;
+    this.session.notes.push({ at: Date.now(), text });
     this.scheduleSave();
     this.onStateChanged();
   }
@@ -127,6 +141,10 @@ export class SessionManager implements vscode.Disposable {
   private lastIdleArmAt = 0;
   /** Guard against stacking idle prompts. */
   private idlePromptOpen = false;
+  /** Active minutes at the last progress note — re-arm after progressAt more. */
+  private lastProgressActiveMin = 0;
+  /** Guard against stacking progress-update prompts. */
+  private progressPromptOpen = false;
 
   private onActivityEvent(ev: TrackedEvent, filePath?: string, now?: number): void {
     const ts = now ?? Date.now();
@@ -209,7 +227,7 @@ export class SessionManager implements vscode.Disposable {
       this.idlePromptOpen = false;
       this.lastIdleArmAt = Date.now() + this.th.idleConfirm;
       if (choice === 'end') {
-        void this.endSession('user');
+        void this.endSessionWithNote('user');
       } else if (choice === 'active') {
         this.accrueOutsideConfirmed(Date.now());
       }
@@ -324,7 +342,8 @@ export class SessionManager implements vscode.Disposable {
   private async applyWrapResult(s: Session, result: { choice: string }): Promise<void> {
     const now = Date.now();
     if (result.choice === 'wrap-new') {
-      await this.endSession('user');
+      const closed = await this.endSession('user');
+      if (closed) await this.recordCloseNote(closed);
       await this.startFresh();
       return;
     }
@@ -410,6 +429,29 @@ export class SessionManager implements vscode.Disposable {
     return s;
   }
 
+  /** End a user-initiated session and offer an optional closing note. */
+  async endSessionWithNote(reason: Exclude<ClosedReason, 'workspace-switch'>): Promise<Session | null> {
+    const closed = await this.endSession(reason);
+    if (closed) await this.recordCloseNote(closed);
+    return closed;
+  }
+
+  /** Optional closing description — prompt, then persist as description + note. */
+  async recordCloseNote(s: Session): Promise<void> {
+    const note = await this.prompts.askSessionClose(s);
+    if (!note) return;
+    s.notes.push({ at: Date.now(), text: note });
+    if (!s.description) {
+      s.description = note;
+      s.needsDescription = false;
+    }
+    await this.store.updateSession(s.id, {
+      description: s.description,
+      needsDescription: s.needsDescription,
+      notes: s.notes,
+    });
+  }
+
   /** Suspend (workspace switch) — persist as active, don't close. */
   suspendForSwitch(): void {
     if (!this.session) return;
@@ -424,7 +466,12 @@ export class SessionManager implements vscode.Disposable {
     this.session = this.store.newSession(wsKey, ws.name, now);
     this.machine = newMachine();
     startSession(this.machine, now);
+    this.lastProgressActiveMin = 0;
     this.firstActivityAfterOpen = true;
+    if (this.askDescriptionOnStart) {
+      const desc = await this.prompts.askSessionStart(this.session);
+      if (desc) await this.applyStartDescription(desc);
+    }
     this.scheduleSave();
     this.onStateChanged();
   }
@@ -464,8 +511,36 @@ export class SessionManager implements vscode.Disposable {
     this.heartbeatTimer = setInterval(() => {
       this.scheduleSave();
       this.checkIdle(Date.now());
+      this.checkProgress(Date.now());
       this.checkAutoEnd(Date.now());
     }, 60 * 1000);
+  }
+
+  /**
+   * Periodic progress snapshot: after every progressAt of active (non-idle,
+   * non-pending) minutes, offer a short "what's changed?" note. Skipping re-arms
+   * the timer rather than nagging. Applies while the machine is in 'active' or
+   * 'grace' — never while a describe/wrap/other prompt owns the prompt slot.
+   */
+  private checkProgress(now: number): void {
+    if (!this.session || this.progressPromptOpen) return;
+    const m = this.machine;
+    if (m.state !== 'active' && m.state !== 'grace') return;
+    if (m.activeMinutes - this.lastProgressActiveMin < this.th.progressAt) return;
+    this.progressPromptOpen = true;
+    const session = this.session;
+    void this.prompts.askProgressUpdate(session).then((text) => {
+      this.progressPromptOpen = false;
+      this.lastProgressActiveMin = m.activeMinutes;
+      if (!text) return;
+      session.notes.push({ at: Date.now(), text });
+      if (!session.description) {
+        session.description = text;
+        session.needsDescription = false;
+      }
+      this.scheduleSave();
+      this.onStateChanged();
+    });
   }
 
   /**
