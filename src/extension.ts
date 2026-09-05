@@ -4,6 +4,7 @@ import { SessionManager } from './core/sessionManager';
 import { SessionStore } from './storage/sessionStore';
 import { buildPaths, ensureDirs, LaLogPaths } from './storage/store';
 import { SessionsTreeProvider, SessionTreeItem } from './ui/sessionsView';
+import { NowView } from './ui/nowView';
 import { LaLogStatusBar } from './ui/statusBar';
 import { todayActiveMs, todayUntrackedMs } from './reporting/aggregate';
 import { generateReport, ReportRange, saveReport, rangeStart, rangeEnd, rangeLabel } from './reporting/report';
@@ -54,6 +55,7 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   const treeProvider = new SessionsTreeProvider(async () => store.loadAll(), th);
+  const nowView = new NowView(th);
   const statusBar = new LaLogStatusBar(() => {
     void commands.quickActions();
   });
@@ -65,8 +67,10 @@ export function activate(context: vscode.ExtensionContext): void {
 
   async function refreshStatus(): Promise<void> {
     const all = await store.loadAll();
+    const today = todayActiveMs(all, Date.now());
     const now = Date.now();
-    statusBar.update(manager.getSession(), todayActiveMs(all, now), todayUntrackedMs(all, now));
+    statusBar.update(manager.getSession(), today, todayUntrackedMs(all, now));
+    nowView.update(manager.getSession(), today);
   }
 
   const commands = {
@@ -241,7 +245,13 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(treeView);
   treeProvider.refresh();
 
-  context.subscriptions.push(manager, statusBar);
+  const nowViewId = 'lalog.nowView';
+  const nowTreeView = vscode.window.createTreeView(nowViewId, {
+    treeDataProvider: nowView,
+  });
+  context.subscriptions.push(nowTreeView);
+
+  context.subscriptions.push(manager, statusBar, nowView);
 
   // Workspace folder changes: suspend/switch logic.
   context.subscriptions.push(

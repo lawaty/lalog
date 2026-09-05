@@ -300,6 +300,14 @@ Tree view in the activity bar (LaLog icon), grouped by start-date day (newest fi
 - Files and notes expand into rows (file → edit count; note → timestamped text)
 - Click a session row → `lalog.editSession` command
 
+### Now Footer (pinned below Sessions)
+
+A second view, **Now**, sits pinned at the bottom of the panel (below the sessions list, which scrolls independently). It updates every second:
+
+- **Clock** — current wall time plus today's tracked active time
+- **Current session** — workspace, description, live active duration (capped at the idle gap, so it doesn't creep while you're away), and outside-VS-Code time when present
+- **No active session** — a one-click "Start session" action
+
 ### Quick Actions Menu
 
 Clicking the status bar opens:

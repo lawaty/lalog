@@ -147,7 +147,8 @@
     },
     "views": {
       "lalog": [
-        { "id": "lalog.sessionsView", "name": "Sessions" }
+        { "id": "lalog.sessionsView", "name": "Sessions" },
+        { "id": "lalog.nowView", "name": "Now" }
       ]
     },
     "menus": {
