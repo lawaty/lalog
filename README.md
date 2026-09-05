@@ -15,6 +15,7 @@ You open VS Code and just work. LaLog handles the rest:
 - **Descriptions at the right moments.** The start description is offered a few minutes into a session rather than the moment you open the editor; a longer one waits until the ~90-minute mark, hourly progress notes fill in between, and closing notes wrap it up. Every entry is a timestamped note on the session — and whether you answer or not, tracking keeps running.
 - **A real drill-down UI.** The sidebar groups sessions by day; expand any session to see its description, active vs. outside-VS-Code split, per-kind event counters, top files, the note timeline, and the git branch and commits made during it.
 - **Stops on its own.** "Are you still there?" fires after 15 idle minutes so outside-editor work isn't lost — and abandoned sessions auto-close after ~2 hours instead of accumulating phantom time. Come back, type one key, and a fresh session picks up where it left off.
+- **A clock you can act on.** The pinned **Now** box shows the live session and a ticking clock, with nothing but pause, resume, and end — because the tracking is always on; ending a session immediately starts a fresh tracked one.
 - **Optional AI, off by default.** When enabled, a local `opencode` CLI drafts descriptions, writes report narratives, and reviews your work. It only ever sees the compact session summary (file paths, counters, branch, commit subjects) — never file contents or terminal output.
 
 ## How it looks
@@ -63,6 +64,8 @@ Data is written to `~/.lalog/`:
 |---|---|
 | Start session | `lalog.startSession` |
 | End session | `lalog.endSession` |
+| End & restart session | `lalog.endSessionRestart` |
+| Pause / resume session | `lalog.pauseSession` / `lalog.resumeSession` |
 | Describe current session | `lalog.describeNow` |
 | Generate report | `lalog.report` |
 | Analyze my work (AI) | `lalog.analysis` |

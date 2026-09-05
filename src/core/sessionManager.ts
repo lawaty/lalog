@@ -114,6 +114,7 @@ export class SessionManager implements vscode.Disposable {
     this.firstActivityAfterOpen = true;
     // On-start description is offered a few minutes in, not immediately, so it
     // doesn't interrupt the first thing you actually want to do.
+    this.paused = false;
     if (this.askDescriptionOnStart) this.scheduleStartDescription(this.session);
     this.scheduleSave();
     this.onStateChanged();
@@ -166,6 +167,7 @@ export class SessionManager implements vscode.Disposable {
     const ws = this.currentWorkspaceKey();
     if (!ws) return;
     const wsKey = workspaceKey(ws.key);
+    this.paused = false;
     this.session = this.store.newSession(wsKey, ws.name, now);
     this.machine = newMachine();
     startSession(this.machine, now);
@@ -221,9 +223,12 @@ export class SessionManager implements vscode.Disposable {
   private pendingClose: Session | null = null;
   /** One-shot 'describe your session?' prompt fired startDescAt after session start. */
   private startDescTimer: NodeJS.Timeout | null = null;
+  /** Explicit user pause: keep the session open but accrue/prompt/end nothing. */
+  private paused = false;
 
   private onActivityEvent(ev: TrackedEvent, filePath?: string, now?: number): void {
     const ts = now ?? Date.now();
+    if (this.paused) return; // explicitly paused: don't count, record, or reset timers
     if (!this.session) this.ensureSessionOnActivity(ts);
     if (!this.session) return;
 
@@ -283,6 +288,60 @@ export class SessionManager implements vscode.Disposable {
     this.session.activeMinutes = this.machine.activeMinutes;
   }
 
+  /** Whether the user has explicitly paused the tracking clock. */
+  isPaused(): boolean {
+    return this.paused;
+  }
+
+  /**
+   * Pause the session: it stays open and restored as-is, but the tracking clock
+   * stops — no accrual, no events, no idle/progress/auto-end prompts. The open
+   * span is finalized at the pause moment so nothing after it is counted.
+   */
+  pause(): void {
+    if (!this.session || this.paused) return;
+    const now = Date.now();
+    this.closeOpenSpanAt(this.machine.lastActivityAt ?? now);
+    this.syncSessionActive();
+    this.paused = true;
+    this.clearForceTimers();
+    this.clearStartDescription();
+    this.scheduleSave();
+    this.onStateChanged();
+  }
+
+  /** Resume a paused session: counting restarts from right now (no giant gap). */
+  resume(): void {
+    if (!this.session || !this.paused) return;
+    const now = Date.now();
+    this.paused = false;
+    if (this.machine.state === 'idle') {
+      startSession(this.machine, now);
+    } else {
+      this.machine.lastActivityAt = now;
+    }
+    this.session.lastActivityAt = now;
+    this.openSpanStart = now;
+    this.lastIdleArmAt = now + this.th.idleConfirm;
+    this.lastProgressActiveMin = this.machine.activeMinutes;
+    this.scheduleSave();
+    this.onStateChanged();
+  }
+
+  /**
+   * End the current session and immediately start a fresh tracked one — the Now
+   * box "End". Work never stops being monitored: the new session opens right
+   * away (undescribed; the delayed start prompt handles that), with an optional
+   * closing note collected for the ended session.
+   */
+  async endAndRestart(): Promise<Session | null> {
+    const closed = this.session ? this.session : null;
+    if (closed) await this.endSession('user');
+    await this.startFresh();
+    if (closed) await this.recordCloseNote(closed);
+    return closed;
+  }
+
   /**
    * 'Are you still there?' — called from the heartbeat. If the user has been
    * idle >= idleConfirm and confirms they're still working (e.g. outside VS
@@ -290,7 +349,7 @@ export class SessionManager implements vscode.Disposable {
    * filter-time classification tags it 'outside'.
    */
   private checkIdle(now: number): void {
-    if (!this.session || this.idlePromptOpen) return;
+    if (!this.session || this.paused || this.idlePromptOpen) return;
     const m = this.machine;
     if (m.state !== 'active' && m.state !== 'describePending' && m.state !== 'wrapPending' && m.state !== 'grace') {
       return;
@@ -498,6 +557,7 @@ export class SessionManager implements vscode.Disposable {
     if (reason === 'auto-idle') this.pendingClose = s;
     this.clearForceTimers();
     this.clearStartDescription();
+    this.paused = false;
     this.session = null;
     this.machine = newMachine();
     this.openSpanStart = null;
@@ -540,6 +600,7 @@ export class SessionManager implements vscode.Disposable {
     if (!ws) return;
     const now = Date.now();
     const wsKey = workspaceKey(ws.key);
+    this.paused = false;
     this.clearStartDescription();
     this.session = this.store.newSession(wsKey, ws.name, now);
     this.machine = newMachine();
@@ -598,7 +659,7 @@ export class SessionManager implements vscode.Disposable {
    * 'grace' — never while a describe/wrap/other prompt owns the prompt slot.
    */
   private checkProgress(now: number): void {
-    if (!this.session || this.progressPromptOpen) return;
+    if (!this.session || this.paused || this.progressPromptOpen) return;
     const m = this.machine;
     if (m.state !== 'active' && m.state !== 'grace') return;
     if (m.activeMinutes - this.lastProgressActiveMin < this.th.progressAt) return;
@@ -626,7 +687,7 @@ export class SessionManager implements vscode.Disposable {
    * lastActivityAt (active-only) so nothing idle is ever counted.
    */
   private checkAutoEnd(now: number): void {
-    if (!this.session) return;
+    if (!this.session || this.paused) return;
     if (this.idlePromptOpen) return;
     const m = this.machine;
     if (m.lastActivityAt === null) return;

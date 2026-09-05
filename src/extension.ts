@@ -4,7 +4,7 @@ import { SessionManager } from './core/sessionManager';
 import { SessionStore } from './storage/sessionStore';
 import { buildPaths, ensureDirs, LaLogPaths } from './storage/store';
 import { SessionsTreeProvider, SessionTreeItem } from './ui/sessionsView';
-import { NowView } from './ui/nowView';
+import { NowViewProvider } from './ui/nowView';
 import { LaLogStatusBar } from './ui/statusBar';
 import { todayActiveMs, todayUntrackedMs } from './reporting/aggregate';
 import { generateReport, ReportRange, saveReport, rangeStart, rangeEnd, rangeLabel } from './reporting/report';
@@ -55,7 +55,6 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   const treeProvider = new SessionsTreeProvider(async () => store.loadAll(), th);
-  const nowView = new NowView(th);
   const statusBar = new LaLogStatusBar(() => {
     void commands.quickActions();
   });
@@ -65,27 +64,46 @@ export function activate(context: vscode.ExtensionContext): void {
     void refreshStatus();
   });
 
+  let cachedTodayMs = 0;
+  const nowView = new NowViewProvider(() => ({
+    session: manager.getSession(),
+    todayActiveMs: cachedTodayMs,
+    paused: manager.isPaused(),
+    idleGap: th.idleGap,
+  }));
+
   async function refreshStatus(): Promise<void> {
     const all = await store.loadAll();
     const today = todayActiveMs(all, Date.now());
+    cachedTodayMs = today;
     const now = Date.now();
-    statusBar.update(manager.getSession(), today, todayUntrackedMs(all, now));
-    nowView.update(manager.getSession(), today);
+    statusBar.update(
+      manager.getSession(),
+      today,
+      todayUntrackedMs(all, now),
+      manager.isPaused()
+    );
   }
 
   const commands = {
     async quickActions(): Promise<void> {
+      const paused = manager.isPaused();
       const pick = await vscode.window.showQuickPick(
         [
           { label: '$(pencil) Describe current session', id: 'describe' },
-          { label: '$(check) End session', id: 'end' },
+          paused
+            ? { label: '$(play) Resume session', id: 'resume' }
+            : { label: '$(debug-pause) Pause session', id: 'pause' },
+          { label: '$(check) End & restart session', id: 'end' },
           { label: '$(calendar) Generate report', id: 'report' },
         ],
         { title: 'LaLog' }
       );
       if (!pick) return;
       if (pick.id === 'describe') await vscode.commands.executeCommand('lalog.describeNow');
-      if (pick.id === 'end') await vscode.commands.executeCommand('lalog.endSession');
+      if (pick.id === 'pause') await vscode.commands.executeCommand('lalog.pauseSession');
+      if (pick.id === 'resume') await vscode.commands.executeCommand('lalog.resumeSession');
+      if (pick.id === 'end') await vscode.commands.executeCommand('lalog.endSessionRestart');
       if (pick.id === 'report') await vscode.commands.executeCommand('lalog.report');
     },
   };
@@ -103,6 +121,33 @@ export function activate(context: vscode.ExtensionContext): void {
 
   registerCommand('lalog.startSession', () => {
     void manager.startFresh();
+  });
+
+  registerCommand('lalog.pauseSession', () => {
+    manager.pause();
+  });
+
+  registerCommand('lalog.resumeSession', () => {
+    manager.resume();
+  });
+
+  registerCommand('lalog.endSessionRestart', async () => {
+    const s = await manager.endAndRestart();
+    if (s) {
+      const ws = vscode.workspace.workspaceFolders?.[0];
+      if (ws) {
+        try {
+          const { annotateSessionWithGit } = await import('./integrations/git');
+          await annotateSessionWithGit(s, ws.uri.fsPath);
+        } catch {
+          /* ignore */
+        }
+      }
+      await refreshStatus();
+      vscode.window.showInformationMessage(
+        `Session ended: ${fmtActive(s)} — new tracking session started`
+      );
+    }
   });
 
   registerCommand('lalog.endSession', async () => {
@@ -245,13 +290,17 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(treeView);
   treeProvider.refresh();
 
-  const nowViewId = 'lalog.nowView';
-  const nowTreeView = vscode.window.createTreeView(nowViewId, {
-    treeDataProvider: nowView,
-  });
-  context.subscriptions.push(nowTreeView);
+  const nowViewId = NowViewProvider.viewType;
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(nowViewId, nowView)
+  );
 
   context.subscriptions.push(manager, statusBar, nowView);
+
+  // Keep the "today" figure fresh even when idle (no state changes to trigger
+  // refreshStatus) — the Now clock ticks regardless, from the provider's timer.
+  const todayRefresh = setInterval(() => void refreshStatus(), 60 * 1000);
+  context.subscriptions.push({ dispose: () => clearInterval(todayRefresh) });
 
   // Workspace folder changes: suspend/switch logic.
   context.subscriptions.push(

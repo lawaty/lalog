@@ -16,27 +16,29 @@ export class LaLogStatusBar implements vscode.Disposable {
     this.item.command = 'lalog.statusAction';
   }
 
-  update(session: Session | null, todayActiveMs: number, untrackedMs: number): void {
+  update(session: Session | null, todayActiveMs: number, untrackedMs: number, paused = false): void {
     this.todayDuration = todayActiveMs;
     this.untrackedMin = Math.round(untrackedMs / 60000);
     if (!session || !session.startedAt) {
       this.item.text = `$(watch) ${fmtDuration(todayActiveMs)} today`;
-      this.item.tooltip = this.tooltip();
+      this.item.tooltip = this.tooltip(paused);
       this.item.show();
       return;
     }
-    const liveMs = Math.min(Date.now() - session.lastActivityAt, LIVE_CAP_MS);
+    const liveMs = paused ? 0 : Math.min(Date.now() - session.lastActivityAt, LIVE_CAP_MS);
     const activeMs = session.activeMinutes + liveMs;
     const desc = session.description ? ` ${session.description}` : '';
-    this.item.text = `$(play)${desc} · ${fmtDuration(activeMs)}`;
-    this.item.tooltip = this.tooltip();
+    const icon = paused ? '$(debug-pause)' : '$(play)';
+    this.item.text = `${icon}${desc} · ${fmtDuration(activeMs)}${paused ? ' · paused' : ''}`;
+    this.item.tooltip = this.tooltip(paused);
     this.item.show();
   }
 
-  private tooltip(): string {
+  private tooltip(paused: boolean): string {
     const today = fmtDuration(this.todayDuration);
+    const state = paused ? ' · paused' : '';
     const untracked = this.untrackedMin > 0 ? ` · ${this.untrackedMin}m untracked` : '';
-    return `LaLog — ${today} today${untracked}\nClick for quick actions`;
+    return `LaLog — ${today} today${state}${untracked}\nClick for quick actions`;
   }
 
   dispose(): void {

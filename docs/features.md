@@ -303,13 +303,14 @@ Tree view in the activity bar (LaLog icon), grouped by start-date day (newest fi
 - Files and notes expand into rows (file → edit count; note → timestamped text)
 - Click a session row → `lalog.editSession` command
 
-### Now Footer (pinned below Sessions)
+### Now Box (pinned below Sessions)
 
-A second view, **Now**, sits pinned at the bottom of the panel (below the sessions list, which scrolls independently). It updates every second:
+The second view, **Now**, is a small card pinned at the bottom of the panel, styled like a chat input box. A session is **always** running, so the box never has a "Start" — its controls only pause/resume/end the always-on tracking. It updates every second:
 
-- **Clock** — current wall time plus today's tracked active time
-- **Current session** — workspace, description, live active duration (capped at the idle gap, so it doesn't creep while you're away), and outside-VS-Code time when present
-- **No active session** — a one-click "Start session" action
+- **Session** — workspace name and its description (or a "(no description yet)" placeholder)
+- **Clock** — live wall clock plus the session's active duration (capped at the idle gap, so it doesn't creep while you're away) and today's tracked total
+- **Status pill** — green **tracking** dot, or amber **paused**
+- **Buttons** — **Pause** / **Resume** swap the tracking clock on and off (the session itself stays open, untouched); **End** closes the session, records an optional closing note, and immediately starts a fresh tracked session so nothing is ever left untracked
 
 ### Quick Actions Menu
 
@@ -471,6 +472,9 @@ thresholdsMs(cfg) → {
 |---------|----|-------------|
 | Start session | `lalog.startSession` | Begin a new session in the current workspace |
 | End session | `lalog.endSession` | Close the current session (with git annotation) |
+| End & restart | `lalog.endSessionRestart` | Close the current session and immediately start a fresh tracked one |
+| Pause session | `lalog.pauseSession` | Stop the tracking clock (session stays open) |
+| Resume session | `lalog.resumeSession` | Restart the tracking clock from now |
 | Describe now | `lalog.describeNow` | Trigger the describe flow immediately |
 | Generate report | `lalog.report` | Session-centric markdown report (today/week/month) |
 | Show sessions | `lalog.showSessions` | Focus the sessions sidebar view |

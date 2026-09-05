@@ -138,6 +138,9 @@
     "commands": [
       { "command": "lalog.startSession", "title": "LaLog: Start session" },
       { "command": "lalog.endSession", "title": "LaLog: End session" },
+      { "command": "lalog.endSessionRestart", "title": "LaLog: End & restart session" },
+      { "command": "lalog.pauseSession", "title": "LaLog: Pause session" },
+      { "command": "lalog.resumeSession", "title": "LaLog: Resume session" },
       { "command": "lalog.describeNow", "title": "LaLog: Describe current session" },
       { "command": "lalog.report", "title": "LaLog: Generate report" },
       { "command": "lalog.analysis", "title": "LaLog: Analyze my work", "enablement": "config.lalog.ai.enabled" },
@@ -153,7 +156,7 @@
     "views": {
       "lalog": [
         { "id": "lalog.sessionsView", "name": "Sessions" },
-        { "id": "lalog.nowView", "name": "Now" }
+        { "type": "webview", "id": "lalog.nowView", "name": "Now" }
       ]
     },
     "menus": {
