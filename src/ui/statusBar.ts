@@ -16,6 +16,12 @@ export class LaLogStatusBar implements vscode.Disposable {
     this.item.command = 'lalog.statusAction';
   }
 
+  loading(): void {
+    this.item.text = '$(loading~spin) LaLog\u2026';
+    this.item.tooltip = 'Loading session data\u2026';
+    this.item.show();
+  }
+
   update(session: Session | null, todayActiveMs: number, untrackedMs: number, paused = false): void {
     this.todayDuration = todayActiveMs;
     this.untrackedMin = Math.round(untrackedMs / 60000);

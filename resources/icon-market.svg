@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <defs>
+    <mask id="agenda">
+      <rect width="24" height="24" fill="#fff"/>
+      <rect x="8.5" y="15.25" width="7" height="1.5" fill="#000"/>
+      <rect x="8.5" y="18"    width="7" height="1.5" fill="#000"/>
+    </mask>
+  </defs>
+  <rect x="6.5" y="12.5" width="11" height="9" rx="1.5" fill="#6B4A2F" mask="url(#agenda)"/>
+  <circle cx="7.5"  cy="4.5"   r="2.5" fill="#6B4A2F"/>
+  <circle cx="16.5" cy="4.5"   r="2.5" fill="#6B4A2F"/>
+  <circle cx="12"   cy="8"     r="5.5" fill="#6B4A2F"/>
+  <ellipse cx="9.9" cy="7.5" rx="1.6" ry="1.1" fill="#1a1a1a"/>
+  <ellipse cx="14.1" cy="7.5" rx="1.6" ry="1.1" fill="#1a1a1a"/>
+  <ellipse cx="12" cy="9.6" rx="1" ry="0.7" fill="#1a1a1a"/>
+  <circle cx="7.5" cy="4.8" r="0.9" fill="#1a1a1a"/>
+  <circle cx="16.5" cy="4.8" r="0.9" fill="#1a1a1a"/>
+  <circle cx="6.5"  cy="16.25" r="1.75" fill="#6B4A2F"/>
+  <circle cx="17.5" cy="16.25" r="1.75" fill="#6B4A2F"/>
+</svg>

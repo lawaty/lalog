@@ -14,6 +14,7 @@
 - [Export: files_by_day.txt](#export-files_by_daytxt)
 - [Reports](#reports)
 - [Example Data](#example-data)
+- [Technical Sidecar](#technical-sidecar)
 
 ---
 
@@ -24,14 +25,18 @@ All data is stored in `~/.lalog/` (configurable via `lalog.dataDir`):
 ```
 ~/.lalog/
 ├── sessions.jsonl              # All closed sessions (append-only)
+├── projects.json               # Curated project registry (rewritten atomically)
 ├── active/
 │   ├── <wsKey>.json            # Active session snapshot per workspace
 │   └── <wsKey>.json.tmp        # Temporary file during atomic write
 ├── exports/
+│   ├── sessions-YYYY-MM-DD.csv # Full session CSV dump (lalog.exportCsv)
 │   └── <slug>/
 │       └── files_by_day.txt    # Legacy export format
-└── reports/
-    └── YYYY-MM.md              # Monthly report files
+├── reports/
+│   └── <start-date>-<range>[-<slug>].md
+└── technical/
+    └── <sessionId>.jsonl        # Per-session technical detail sidecar
 ```
 
 **Workspace key** (`<wsKey>`): SHA-1 hash of the workspace's realpath, first 10 hex chars. Example: `a1b2c3d4e5`.
@@ -56,9 +61,12 @@ interface Session {
   lastActivityAt: number;        // Unix timestamp (ms)
   activeMinutes: number;         // Total active time (milliseconds, gap-based)
   activeSpans: ActiveSpan[];     // Contiguous active periods (ms) — sum ≈ activeMinutes
+  technicalSidecar?: string;  // Absolute path to the technical detail sidecar JSONL (set on first write)
   activityTs: number[];          // Sorted activity timestamps (ms), capped at 20000 — powers the in/out-of-VS-Code split
   type?: SessionType;            // "feature" | "bugfix" | "research" | "refactor" | "review" | "docs" | "ops" | "other"
   description?: string;          // User-provided description
+  anonymous?: boolean;           // "background work" — no labeling prompts, dimmed in UI
+  projectId?: string;            // Manual project override (beats derived workspace claims)
   notes: { at: number; text: string }[];  // Timestamped notes
   needsDescription: boolean;     // True if session lacks description
   events: {
@@ -170,6 +178,53 @@ interface SessionCommits {
 
 ---
 
+## projects.json (project registry)
+
+**Location**: `~/.lalog/projects.json`
+
+**Format**: Pretty-printed JSON, versioned, rewritten atomically (`.tmp` → rename). Separate from the append-only `sessions.jsonl` because projects are *curated state*, not event history.
+
+**Schema**:
+
+```typescript
+interface ProjectFile {
+  version: 1;
+  projects: Project[];
+}
+
+interface Project {
+  id: string;                 // "prj_<8hex>" — random
+  name: string;               // "LaLog"
+  color: string;              // from PROJECT_COLORS palette (10 hex colors), by creation index
+  workspaceKeys: string[];    // claimed workspace keys — sessions with any match derive to this project
+  pathHints: string[];        // human-readable folder examples for the UI (never matched)
+  createdAt: number;          // ms epoch
+  archivedAt?: number;        // set → excluded from derivation (explicit assignments stay)
+}
+```
+
+**Example**:
+
+```json
+{
+  "version": 1,
+  "projects": [
+    {
+      "id": "prj_1a2b3c4d",
+      "name": "LaLog",
+      "color": "#2ea043",
+      "workspaceKeys": ["a1b2c3d4e5", "f6a7b8c9d0"],
+      "pathHints": ["/home/lawaty/Projects/worklog"],
+      "createdAt": 1725397200000
+    }
+  ]
+}
+```
+
+**Resolution rule** (`resolveProject`, pure): an explicit `session.projectId` wins; otherwise a session belongs to the first **non-archived** project claiming its `workspaceKey`; otherwise it's unassigned.
+
+---
+
 ## Export: files_by_day.txt
 
 **Location**: `~/.lalog/exports/<slug>/files_by_day.txt`
@@ -200,7 +255,7 @@ interface SessionCommits {
 
 ## Reports
 
-**Location**: `~/.lalog/reports/YYYY-MM.md`
+**Location**: `~/.lalog/reports/<start-date>-<range>[-<slug>].md`, e.g. `2026-09-01-this-month.md`, `2026-09-07-custom.md`
 
 **Format**: Markdown, session-centric.
 
@@ -238,9 +293,9 @@ Sessions started: 2026-09-01, 2026-09-02, 2026-09-03
 
 **Generation**:
 - Triggered by `lalog.report` command
-- User selects range: Today, Yesterday, This week, This month, Last month
+- User selects range: Today, Yesterday, This week, This month, Last month, or a custom `YYYY-MM-DD...YYYY-MM-DD` pair (up to 31 days)
 - Sessions are never split across days (start-date attribution)
-- Report is saved to monthly file (e.g., `2026-09.md`), overwriting previous content
+- The file is date-prefixed with the range start (local date) so each range of a different period gets its own non-overwriting file; a project scope adds a slug (`2026-09-01-this-month-my-project.md`); custom ranges prefix with the custom start date (`2026-09-03-custom.md`)
 
 ---
 
@@ -327,6 +382,83 @@ Active snapshot deleted: `~/.lalog/active/abc1234567.json` removed.
 **6. Report generated (next day)**:
 
 Session appears under "Sep 3" (start-date attribution), even though it ended on Sep 4.
+
+---
+
+## Technical Sidecar
+
+**Location**: `~/.lalog/technical/<sessionId>.jsonl`
+
+**Purpose**: Stores detailed technical content (file diffs, terminal executions, AI interaction metadata) that would make the main `sessions.jsonl` unwieldy. The main session store stays compact; the sidecar captures what was actually done.
+
+**Schema**: JSON Lines — one JSON object per line. Three entry types:
+
+### Diff Entry
+
+```typescript
+interface TechnicalDiff {
+  type: 'diff';
+  ts: number;             // Unix timestamp (ms)
+  path: string;           // Absolute file path
+  diff: string;           // Unified diff (redacted, may be truncated)
+  linesAdded: number;     // Lines added (excludes diff headers)
+  linesRemoved: number;   // Lines removed (excludes diff headers)
+  newFile: boolean;       // true if this is the first save for this path
+}
+```
+
+### Terminal Entry
+
+```typescript
+interface TechnicalTerminal {
+  type: 'terminal';
+  ts: number;             // Unix timestamp (ms) of command end
+  commandLine: string;    // The executed command (redacted)
+  exitCode: number | null; // null if shell didn't report (ctrl+c, sub-shell)
+  durationMs: number;     // Wall-clock duration of command execution
+  cwd?: string;           // Working directory (if reported by shell integration)
+  stdout?: string;        // Captured output (only when captureTerminalStdout is on; ANSI-stripped, redacted, capped)
+  confidence: 'low' | 'medium' | 'high'; // Command line parsing confidence from VS Code
+}
+```
+
+### AI Interaction Entry
+
+```typescript
+interface TechnicalAiInteraction {
+  type: 'ai';
+  ts: number;             // Unix timestamp (ms)
+  task: string;           // 'describe' | 'narrative' | 'analysis'
+  model: string;          // Model identifier
+  latencyMs: number;      // Round-trip time for the AI call
+  promptChars: number;    // Character count of the prompt (never the text itself)
+  responseChars: number;  // Character count of the response (never the text itself)
+  truncated: boolean;     // Whether the response was truncated
+}
+```
+
+### Caps & Rotation
+
+| Limit | Default | Description |
+|-------|---------|-------------|
+| `maxDiffChars` | 16,000 | Max characters per diff entry; appended with `\n...[truncated]` |
+| `maxStdoutChars` | 32,000 | Max characters per terminal stdout; appended with `\n...[truncated]` |
+| File size | 2 MB | When a sidecar exceeds this, it is rotated |
+| Entries | 5,000 | On rotation, only the last N entries are kept |
+
+### Redaction
+
+All diff content and terminal stdout are scanned against `lalog.redactPatterns` (compiled as case-insensitive global regexes). Matching text is replaced with `[REDACTED]` before storage.
+
+### Storage Notes
+
+- **Sidecar path** is stored in `Session.technicalSidecar` (absolute path, set on first write)
+- **Binary files** (null byte in first 8KB) are skipped — no diff entry is written
+- **First save** for a path produces a new-file diff (all lines added, `newFile: true`)
+- **Identical saves** produce no entry
+- **Stdout capture** is opt-in (`lalog.captureTerminalStdout`, default off) because it may contain sensitive data and requires shell integration (`read()` must attach at command start)
+- **AI interaction** entries store character counts only — prompt and response text are never captured
+- **Best-effort** — all writes are wrapped in try/catch; failures are logged to console.error but never thrown
 
 ---
 

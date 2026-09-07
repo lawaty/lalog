@@ -13,10 +13,15 @@ export interface LaLogConfig {
   progressAfterMinutes: number;
   askDescriptionOnStart: boolean;
   autoEndAfterIdleMinutes: number;
-  resumeWindowMinutes: number;
   debugTimeScale: number;
   logTerminalCommands: boolean;
   redactPatterns: string[];
+  captureDiffs: boolean;
+  captureTerminal: boolean;
+  captureTerminalStdout: boolean;
+  captureAiLog: boolean;
+  maxDiffChars: number;
+  maxStdoutChars: number;
 }
 
 const DEFAULTS: LaLogConfig = {
@@ -31,10 +36,15 @@ const DEFAULTS: LaLogConfig = {
   progressAfterMinutes: 60,
   askDescriptionOnStart: true,
   autoEndAfterIdleMinutes: 120,
-  resumeWindowMinutes: 30,
   debugTimeScale: 1,
   logTerminalCommands: true,
   redactPatterns: ['TOKEN', 'KEY', 'SECRET', 'PASSWORD', 'PASS=', 'API_KEY', 'api[-_]?key'],
+  captureDiffs: true,
+  captureTerminal: true,
+  captureTerminalStdout: false,
+  captureAiLog: true,
+  maxDiffChars: 16000,
+  maxStdoutChars: 32000,
 };
 
 /** Raw AI-config values read from VS Code settings. */
@@ -89,7 +99,6 @@ export interface ThresholdsMs {
   hardSplit: number;
   progressAt: number;
   autoEndIdle: number;
-  resumeWindow: number;
   /** Not a duration — max free 'extend' choices before description is required. */
   maxGraceExtensions: number;
 }
@@ -109,7 +118,6 @@ export function thresholdsMs(cfg: LaLogConfig): ThresholdsMs {
     hardSplit: m(300),
     progressAt: m(cfg.progressAfterMinutes),
     autoEndIdle: m(cfg.autoEndAfterIdleMinutes),
-    resumeWindow: m(cfg.resumeWindowMinutes),
     maxGraceExtensions: Math.max(1, cfg.maxGraceExtensions),
   };
 }

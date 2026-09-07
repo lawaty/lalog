@@ -13,10 +13,12 @@ You open VS Code and just work. LaLog handles the rest:
 - **Sessions, not timers.** Opening a workspace starts tracking automatically — you are never "untracked." If a session ends (auto-close, manual end) and you keep working, a fresh one starts silently at the next event. A session is a continuous thread, bounded by idle time rather than the clock: an overnight run from 22:00 to 02:00 is one session.
 - **Active-only time.** A session's duration is the sum of its active moments and spans, never `end − start` wall-clock. Idle gaps don't count. If you pop away from your desk and confirm you were actually "still working," that time is counted separately as *outside VS Code*.
 - **Descriptions at the right moments.** The start description is offered a few minutes into a session rather than the moment you open the editor; a longer one waits until the ~90-minute mark, hourly progress notes fill in between, and closing notes wrap it up. Every entry is a timestamped note on the session — and whether you answer or not, tracking keeps running.
-- **A real drill-down UI.** The sidebar groups sessions by day; expand any session to see its description, active vs. outside-VS-Code split, per-kind event counters, top files, the note timeline, and the git branch and commits made during it.
+- **A real drill-down UI.** The sidebar holds three tabs — **Sessions**, **Insights**, **Projects**. Sessions group by day (most recent open by default); expand any session to see its description, active vs. outside-VS-Code split, per-kind event counters, top files, the note timeline, git branch/commits, and to assign it to a project or keep it as anonymous background work. Insights gives you at-a-glance bars for time by project/day, a 24-hour colored timeline, and top files — without opening a file.
+- **Anonymous when you say so.** At session start (or any time after) you can choose **Keep as background work**: the session still tracks everything, but LaLog stops asking for a description. Project your many workspaces onto named, colored **projects** (claimed by folder, overridable per session), then filter, scope reports, and read insights by project.
 - **Stops on its own.** "Are you still there?" fires after 15 idle minutes so outside-editor work isn't lost — and abandoned sessions auto-close after ~2 hours instead of accumulating phantom time. Come back, type one key, and a fresh session picks up where it left off.
 - **A clock you can act on.** The pinned **Current Session** box runs a live count-up of this session's tracked time (`h:mm:ss`) beside a small world clock, with nothing but pause, resume, and end — because the tracking is always on; ending a session immediately starts a fresh tracked one.
 - **Optional AI, off by default.** When enabled, a local `opencode` CLI drafts descriptions, writes report narratives, and reviews your work. It only ever sees the compact session summary (file paths, counters, branch, commit subjects) — never file contents or terminal output.
+- **Technical detail capture.** LaLog captures unified diffs at save time, terminal command metadata (with optional stdout capture), and AI interaction logs — all stored locally and subject to configurable redaction patterns and character limits.
 
 ## How it looks
 
@@ -35,7 +37,7 @@ You open VS Code and just work. LaLog handles the rest:
      git fix/login · 2 commits
 ```
 
-Reports are session-centric markdown (today / yesterday / week / month), and nothing is uploaded anywhere unless you opt into AI.
+Reports are session-centric markdown — pick a range (today / yesterday / week / month / any custom span) and a project scope, and single-day reports include an hourly log. Nothing is uploaded anywhere unless you opt into AI.
 
 ## Quick start
 
@@ -53,9 +55,10 @@ Data is written to `~/.lalog/`:
 ```
 ~/.lalog/
 ├── sessions.jsonl            # all closed sessions, append-only
+├── projects.json             # curated project registry (claims folders)
 ├── active/<key>.json         # live session snapshots
-├── exports/                  # files_by_day.txt legacy export
-└── reports/YYYY-MM.md        # generated reports
+├── exports/                  # CSV dumps + files_by_day.txt legacy export
+└── reports/YYYY-MM-<range.md> # generated, scope-aware reports
 ```
 
 ## Commands
@@ -67,7 +70,9 @@ Data is written to `~/.lalog/`:
 | End & restart session | `lalog.endSessionRestart` |
 | Pause / resume session | `lalog.pauseSession` / `lalog.resumeSession` |
 | Describe current session | `lalog.describeNow` |
+| Keep as background work | `lalog.background` |
 | Generate report | `lalog.report` |
+| Export sessions CSV | `lalog.exportCsv` |
 | Analyze my work (AI) | `lalog.analysis` |
 | Show sessions | `lalog.showSessions` |
 | Edit session | `lalog.editSession` |
@@ -86,6 +91,12 @@ Data is written to `~/.lalog/`:
 | `lalog.wrapAfterMinutes` | `210` | When the wrap-and-continue prompt fires |
 | `lalog.ai.enabled` | `false` | Opt into opencode-powered AI assistance |
 | `lalog.dataDir` | `~/.lalog` | Where everything is stored |
+| `lalog.captureDiffs` | boolean | `true` | Capture unified diffs at save time |
+| `lalog.captureTerminal` | boolean | `true` | Capture terminal command metadata |
+| `lalog.captureTerminalStdout` | boolean | `false` | Capture terminal stdout (opt-in) |
+| `lalog.captureAiLog` | boolean | `true` | Log AI interaction metadata |
+| `lalog.maxDiffChars` | number | `16000` | Max characters per diff entry |
+| `lalog.maxStdoutChars` | number | `32000` | Max characters per terminal stdout |
 
 ## Privacy
 

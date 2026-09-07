@@ -10,8 +10,9 @@ import { LlmBridge, LlmResult } from './types';
  *   user's own `opencode auth login`.
  *
  * Data policy: only the compact Session summary is sent (paths, counters,
- * branch, optional commit subjects). File contents and terminal text are never
- * captured by LaLog, so they are never sent.
+ * branch, optional commit subjects). File diffs and terminal text are captured
+ * locally in a per-session sidecar (technical JSONL) and are never sent to the
+ * AI — only the compact Session summary enters the prompt.
  */
 export class OpencodeBridge implements LlmBridge {
   private readonly policy;

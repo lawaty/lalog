@@ -17,6 +17,7 @@ export interface LaLogPaths {
   sessionsFile: string; // dataDir/sessions.jsonl (all closed sessions)
   exportsDir: string; // dataDir/exports
   reportsDir: string; // dataDir/reports
+  technicalDir: string; // dataDir/technical
 }
 
 export function buildPaths(dataDirRaw: string): LaLogPaths {
@@ -27,6 +28,7 @@ export function buildPaths(dataDirRaw: string): LaLogPaths {
     sessionsFile: path.join(dataDir, 'sessions.jsonl'),
     exportsDir: path.join(dataDir, 'exports'),
     reportsDir: path.join(dataDir, 'reports'),
+    technicalDir: path.join(dataDir, 'technical'),
   };
 }
 
@@ -35,6 +37,7 @@ export function ensureDirs(p: LaLogPaths): void {
   fs.mkdirSync(p.activeDir, { recursive: true });
   fs.mkdirSync(p.exportsDir, { recursive: true });
   fs.mkdirSync(p.reportsDir, { recursive: true });
+  fs.mkdirSync(p.technicalDir, { recursive: true });
 }
 
 export function workspaceKey(folderUri: string): string {

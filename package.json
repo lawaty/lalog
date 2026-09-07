@@ -2,7 +2,8 @@
   "name": "lalog",
   "displayName": "LaLog",
   "description": "Local-first work session tracker with automatic event capture, human session descriptions, and optional opencode-powered AI assistance.",
-  "version": "0.2.0",
+  "icon": "resources/icon.png",
+  "version": "0.3.1",
   "publisher": "lawaty",
   "license": "MIT",
   "repository": {
@@ -99,9 +100,49 @@
         },
         "lalog.redactPatterns": {
           "type": "array",
-          "items": { "type": "string" },
-          "default": ["TOKEN", "KEY", "SECRET", "PASSWORD", "PASS=", "API_KEY", "api[-_]?key"],
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "TOKEN",
+            "KEY",
+            "SECRET",
+            "PASSWORD",
+            "PASS=",
+            "API_KEY",
+            "api[-_]?key"
+          ],
           "description": "Regex patterns redacted from logged terminal commands."
+        },
+        "lalog.captureDiffs": {
+          "type": "boolean",
+          "default": true,
+          "description": "Capture unified diffs of file edits at save time (stored in session sidecar)"
+        },
+        "lalog.captureTerminal": {
+          "type": "boolean",
+          "default": true,
+          "description": "Capture terminal command line, exit code, duration, and working directory"
+        },
+        "lalog.captureTerminalStdout": {
+          "type": "boolean",
+          "default": false,
+          "description": "Also capture terminal stdout (opt-in: requires shell integration, may contain sensitive data)"
+        },
+        "lalog.captureAiLog": {
+          "type": "boolean",
+          "default": true,
+          "description": "Log AI interaction metadata (char counts, latency — never prompt/response text)"
+        },
+        "lalog.maxDiffChars": {
+          "type": "number",
+          "default": 16000,
+          "description": "Maximum characters per diff entry before truncation"
+        },
+        "lalog.maxStdoutChars": {
+          "type": "number",
+          "default": 32000,
+          "description": "Maximum characters per terminal stdout capture before truncation"
         },
         "lalog.ai.enabled": {
           "type": "boolean",
@@ -136,26 +177,76 @@
       }
     },
     "commands": [
-      { "command": "lalog.startSession", "title": "LaLog: Start session" },
-      { "command": "lalog.endSession", "title": "LaLog: End session" },
-      { "command": "lalog.endSessionRestart", "title": "LaLog: End & restart session" },
-      { "command": "lalog.pauseSession", "title": "LaLog: Pause session" },
-      { "command": "lalog.resumeSession", "title": "LaLog: Resume session" },
-      { "command": "lalog.describeNow", "title": "LaLog: Describe current session" },
-      { "command": "lalog.report", "title": "LaLog: Generate report" },
-      { "command": "lalog.analysis", "title": "LaLog: Analyze my work", "enablement": "config.lalog.ai.enabled" },
-      { "command": "lalog.showSessions", "title": "LaLog: Show sessions" },
-      { "command": "lalog.editSession", "title": "LaLog: Edit session" },
-      { "command": "lalog.exportFilesByDay", "title": "LaLog: Export files by day" }
+      {
+        "command": "lalog.startSession",
+        "title": "LaLog: Start session"
+      },
+      {
+        "command": "lalog.endSession",
+        "title": "LaLog: End session"
+      },
+      {
+        "command": "lalog.endSessionRestart",
+        "title": "LaLog: End & restart session"
+      },
+      {
+        "command": "lalog.pauseSession",
+        "title": "LaLog: Pause session"
+      },
+      {
+        "command": "lalog.resumeSession",
+        "title": "LaLog: Resume session"
+      },
+      {
+        "command": "lalog.describeNow",
+        "title": "LaLog: Describe current session"
+      },
+      {
+        "command": "lalog.report",
+        "title": "LaLog: Generate report"
+      },
+      {
+        "command": "lalog.background",
+        "title": "LaLog: Keep current session as background work"
+      },
+      {
+        "command": "lalog.exportCsv",
+        "title": "LaLog: Export sessions to CSV"
+      },
+      {
+        "command": "lalog.analysis",
+        "title": "LaLog: Analyze my work",
+        "enablement": "config.lalog.ai.enabled"
+      },
+      {
+        "command": "lalog.showSessions",
+        "title": "LaLog: Show sessions"
+      },
+      {
+        "command": "lalog.editSession",
+        "title": "LaLog: Edit session"
+      },
+      {
+        "command": "lalog.exportFilesByDay",
+        "title": "LaLog: Export files by day"
+      }
     ],
     "viewsContainers": {
       "activitybar": [
-        { "id": "lalog", "title": "LaLog", "icon": "resources/icon.svg" }
+        {
+          "id": "lalog",
+          "title": "LaLog",
+          "icon": "resources/icon.svg"
+        }
       ]
     },
     "views": {
       "lalog": [
-        { "type": "webview", "id": "lalog.sessionsView", "name": "Sessions" }
+        {
+          "type": "webview",
+          "id": "lalog.sessionsView",
+          "name": "Sessions"
+        }
       ]
     }
   },
@@ -168,9 +259,13 @@
     "package": "vsce package"
   },
   "devDependencies": {
+    "@types/diff": "^7.0.2",
     "@types/node": "^20.11.0",
     "@types/vscode": "^1.93.0",
     "esbuild": "^0.20.2",
     "typescript": "^5.4.5"
+  },
+  "dependencies": {
+    "diff": "^9.0.0"
   }
 }

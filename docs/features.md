@@ -35,11 +35,8 @@ A **session** represents a continuous engagement thread with a workspace. Sessio
 ### Session Lifecycle
 
 1. **Activation** — extension activates on `onStartupFinished` or `onDidChangeWorkspaceFolders`
-2. **Recovery** — if an active session snapshot exists for the workspace:
-   - Idle ≥ 2h → auto-close (endedAt = lastActivityAt), offer closing note
-   - Idle < 30min → resume session (reset lastActivityAt to avoid gap accrual)
-   - 30min ≤ idle < 2h → auto-close as `recovery-skip`; a fresh session starts
-3. **New session** — if no snapshot exists, tracking **auto-starts** (never untracked). An optional on-start description prompt records what you're working on (`lalog.askDescriptionOnStart`); if the previous session was ended by VS Code closing, its description is offered first
+2. **Recovery** — if an active session snapshot exists for the workspace (a leftover from an abnormal exit), it is auto-closed as `recovery-skip` (endedAt = lastActivityAt) **without prompting**; a fresh session starts
+3. **New session** — tracking **auto-starts** (never untracked). An optional on-start description prompt records what you're working on (`lalog.askDescriptionOnStart`). Closed/past sessions are never asked about
 4. **Active tracking** — events accrue active time gap-based; each contiguous run is a span; confirmed-idle time extends a span classified as *outside VS Code*
 5. **Describe prompt** — after ~90 active minutes, prompt at natural breakpoint
 6. **Wrap prompt** — after ~3.5h active minutes, prompt to wrap or extend
@@ -49,10 +46,9 @@ A **session** represents a continuous engagement thread with a workspace. Sessio
 
 ### Auto-Start on Open
 
-Opening a workspace with no active session starts tracking immediately — there is no "untracked" state. Two optional pre-session dialogs may appear before work begins (both dismissible with Esc):
+Opening a workspace with no active session starts tracking immediately — there is no "untracked" state. One optional pre-session dialog may appear:
 
-1. **Shutdown recovery** — if the previous session was ended by VS Code closing without a description, an optional description prompt appears
-2. **On-start description** (`lalog.askDescriptionOnStart`, default on) — a short "what are you working on?" prompt offered **a few minutes in** (`lalog.startDescriptionAfterMinutes`, default 5) rather than immediately, so it never interrupts the first thing you do. It fires once and only if no description has been added yet:
+1. **On-start description** (`lalog.askDescriptionOnStart`, default on) — a short "what are you working on?" prompt offered **a few minutes in** (`lalog.startDescriptionAfterMinutes`, default 5) rather than immediately, so it never interrupts the first thing you do. It fires once and only if no description has been added yet:
 
 ```
 ┌─────────────────────────────────────────┐
@@ -94,11 +90,38 @@ Edits are debounced with a 2-second delay to avoid flooding the event stream wit
 
 ### Terminal Command Logging
 
-Terminal commands are captured if `lalog.logTerminalCommands` is enabled (default: true). The extension feature-detects the shell integration API (`onDidStartTerminalShellExecution`) and falls back to terminal open/close events on older VS Code versions.
+Terminal commands are captured if `lalog.captureTerminal` is enabled (default: true). The extension feature-detects the shell integration API (`onDidStartTerminalShellExecution`) and falls back to terminal open/close events on older VS Code versions.
 
-**Redaction**: Terminal commands are scanned against `lalog.redactPatterns` (default: `TOKEN`, `KEY`, `SECRET`, `PASSWORD`, `PASS=`, `API_KEY`, `api[-_]?key`). Matching patterns are redacted before storage.
+**Captured data**: command line, exit code, duration, working directory, and confidence level. Stored in the per-session technical sidecar (`~/.lalog/technical/<sessionId>.jsonl`), not in the main session object.
 
-*Note: The current implementation captures terminal events as counters (edits, saves, terminal counts) but does not store the actual command text in the session object. The redaction patterns are defined in config but the command text logging is not yet implemented in the event recording pipeline.*
+**Stdout capture** is opt-in (`lalog.captureTerminalStdout`, default: off). When enabled, terminal output is captured via `TerminalShellExecution.read()`, ANSI-stripped, redacted, and capped at `lalog.maxStdoutChars` (32,000 chars). This requires shell integration and the `read()` call must attach at command start — output produced before the handler runs cannot be captured.
+
+**Redaction**: Terminal commands and stdout are scanned against `lalog.redactPatterns` (default: `TOKEN`, `KEY`, `SECRET`, `PASSWORD`, `PASS=`, `API_KEY`, `api[-_]?key`). Matching patterns are replaced with `[REDACTED]` before storage.
+
+### Technical Detail Capture
+
+LaLog captures the **technical content** of work so reports and AI can understand what was actually done. All technical detail is stored in a per-session sidecar JSONL file (`~/.lalog/technical/<sessionId>.jsonl`) to keep the main session store compact.
+
+#### File Diff Capture
+
+When `lalog.captureDiffs` is enabled (default: true), a unified diff is generated at each file save:
+
+- **First save** for a path: produces a new-file diff (all lines added, `newFile: true`)
+- **Subsequent saves**: standard unified patch between previous and current content
+- **Binary files** (null byte in first 8KB) are skipped
+- **Identical saves** produce no entry
+- Diffs are redacted against `lalog.redactPatterns` and capped at `lalog.maxDiffChars` (16,000 chars)
+- At most 100 files are tracked simultaneously (LRU eviction of oldest)
+
+#### AI Interaction Logging
+
+When `lalog.captureAiLog` is enabled (default: true), AI calls (describe, narrative, analysis) are logged with:
+
+- Task name, model identifier, latency
+- Prompt and response character counts (never the text itself)
+- Whether the response was truncated
+
+This metadata helps understand what AI assistance was used during a session without storing any prompt or response content.
 
 ### Top Files Tracking
 
@@ -247,11 +270,9 @@ Active sessions are persisted as atomic JSON snapshots in `~/.lalog/active/<wsKe
 ### Recovery on Restart
 
 On activation, the extension:
-1. Loads the active snapshot for the current workspace
-2. Checks idle duration (`now - lastActivityAt`)
-3. Decides: auto-close (idle ≥ 2h → `auto-idle`, 30min–2h → `recovery-skip`), or resume (idle < 30min)
-4. Rebuilds the in-memory `Machine` from the snapshot
-5. If the previous session was ended by VS Code closing (`vscode-shutdown`) and has no description, offers an optional description prompt (see [Auto-Start on Open](#auto-start-on-open))
+1. Loads the active snapshot for the current workspace (present only after an abnormal exit — normal quits close the session as `vscode-shutdown`)
+2. Auto-closes any leftover snapshot as `recovery-skip` (endedAt = lastActivityAt) — recovered sessions are never prompted for a description
+3. Starts a fresh session (see [Auto-Start on Open](#auto-start-on-open))
 
 ### Workspace Key
 
@@ -278,10 +299,12 @@ Left-aligned status bar item (priority 100):
 
 ### Sessions View (Sidebar)
 
-One webview panel in the activity bar (LaLog icon), grouped by start-date day (newest first). The sessions list scrolls; the **Now** box below it is fixed at the bottom of the panel and never moves:
+One webview panel in the activity bar (LaLog icon) with three tabs — **Sessions**, **Insights**, **Projects** — grouped by start-date day (newest first). The sessions list scrolls; the **Now** box below it is fixed at the bottom of the panel and never moves:
 
 ```
 ┌──────────────────────────────────────────┐
+│ [ Sessions ] [ Insights ] [ Projects ]   │
+│ ○ All  ● my-project  ● other · Unassign  │
 │ ▼ 2026-09-03 — 3 sessions, 5h            │
 │   ▼ 10:00 · my-project — Fix login bug   │
 │      Fix login bug                       │
@@ -289,6 +312,8 @@ One webview panel in the activity bar (LaLog icon), grouped by start-date day (n
 │      feature · user · started 10:00      │
 │      edits 142 · saves 23 · terminal 8 · │
 │      file ops 11 · tasks 3 · debug 2     │
+│      ● Project: my-project · change      │
+│      (✎ keep as background work)         │
 │      ▼ 3 files worked on                 │
 │      ▼ 2 notes                           │
 │      git fix/login · 2 commits           │
@@ -297,16 +322,53 @@ One webview panel in the activity bar (LaLog icon), grouped by start-date day (n
 │  │ CURRENT SESSION                    │  │
 │  │ my-project · Fix login bug   ●     │  │
 │  │ 1:40:36 · 10:32:05 · 5h today      │  │
-│  │ [ Pause ] [ End ]                  │  │
+│  │ [ Pause ] [ Resume ] [ End ]       │  │
 │  └────────────────────────────────────┘  │
 └──────────────────────────────────────────┘
 ```
 
-- Session items show: start time, workspace, description (or "needs description"); warning icon for sessions needing description
+- Session items show: status icon (`✓` described, `⚠` needs description, `○` anonymous/background, dimmed), a colored project dot, start time, workspace, and description
+- Project **filter chips** sit above the list: All · one chip per project (with its color) · Unassigned
 - Expand a session to see its full detail: description, active vs outside-VS-Code time split (from `splitActiveMinutes`), type, closed reason, time range, per-kind event counters, top files, the timestamped notes timeline, and git branch/commits
+- Detail actions: change the session's project (assign picker) and, for undescribed sessions, **Keep as background work** / **Not background anymore**
 - Files and notes expand into rows (file → edit count; note → timestamped text)
 - Each session has an ✎ button → `lalog.editSession` command
 - Sessions are grouped by start-date day (newest first); the most recent day group is expanded by default and only collapses if you explicitly close it, so a session that just ended is immediately visible
+
+### Anonymous / Background Sessions
+
+If you didn't want to describe a session, you can leave it **anonymous** ("background work") instead:
+
+- Chosen right at session start (the 3-choice start prompt: **Describe…** / **Keep as background work** / **Not now**), later from the panel detail action, or from the status-bar quick action (`Keep as background work`)
+- Anonymous sessions show a dimmed `○` and `— background`; they are **never** prompted — the describe checkpoint, progress notes, and the on-start description offer all skip them
+- Any real description (edit, describe, or closing note) clears the anonymous flag and normal prompting resumes
+- The wrap prompt still applies to anonymous sessions; only its "Add/update description" option is hidden
+- Reports render them as `*(background work)*` and insights count their time
+
+### Projects
+
+Projects give many workspaces a single name and color. They live in a curated `~/.lalog/projects.json` registry and map sessions on a "derive-on-read" basis:
+
+- **Claimed workspaces** — every session whose `workspaceKey` is claimed by exactly one non-archived project belongs to it automatically
+- **Explicit override** — a session can be assigned to a specific project from its panel row (beats any derived claim, including archived projects)
+- Sessions with no match appear under the **Unassigned** filter chip
+
+The **Projects tab** lists every project with its color, this-week time, session count, and the folders it claims. Create a project from the current workspace in one click, add more workspaces to it, or archive/restore it. Archived projects stop matching sessions but keep their history and their explicitly-assigned sessions.
+
+Projects feed the Insights bar chart, the report scoping picker, and the colored dots next to sessions.
+
+### Insights (panel tab)
+
+The Insights tab shows what took your time, without opening a report file:
+
+- **Period toggle** — Today / Week / Month
+- **Totals** — active time, in-VS-Code vs outside split, session count and average
+- **By project** — CSS bars sized by time in each project's color
+- **Time per day** — one bar per day in the period
+- **Timeline** — one row per day, 24 hour-cells colored by whichever project dominated that hour (hover for the breakdown), with a color key
+- **Top files** — the files you edited most, period-wide
+
+The live (in-progress) session is included in today's figures with its tail capped at the idle gap.
 
 ### Now Box (fixed at the bottom of the panel)
 
@@ -327,8 +389,11 @@ Clicking the status bar opens:
 │ LaLog                           │
 │                                 │
 │ $(pencil) Describe current      │
-│ $(check) End session            │
+│ $(play) Resume session          │ ← or Pause
+│ $(circle-slash) Keep as background work
+│ $(check) End & restart session  │
 │ $(calendar) Generate report     │
+│ $(export) Export sessions CSV   │
 └─────────────────────────────────┘
 ```
 
@@ -346,19 +411,27 @@ Reports are **session-centric** — sessions are never split across days or mont
 - This week (Monday-based)
 - This month
 - Last month
+- **Custom range** — any `YYYY-MM-DD...YYYY-MM-DD` pair (up to 31 days)
+
+After picking the range you can **scope the report to a single project** (or all sessions). When the range is a single day, the report includes an **hourly log** (one line per hour with the project that dominated that hour), and the **in-progress session** is folded into today's figures.
 
 **Report format** (Markdown):
 
 ```markdown
 # LaLog — This Week
 
-**Active time: 12h 30m** across 8 session(s)
+**Active time: 12h 30m** across 8 session(s) *(includes the session in progress)*
 
 Sessions started: 2026-09-01, 2026-09-02, 2026-09-03
 
 ## By project
 - **my-project**: 8h 15m
 - **other-project**: 4h 15m
+
+## Hourly log
+- 09:00 — 52m — my-project
+- 10:00 — 1h 05m — my-project
+- 11:00 — 33m — other-project
 
 ## Sessions
 
@@ -374,7 +447,7 @@ Sessions started: 2026-09-01, 2026-09-02, 2026-09-03
 *Branch: feature/oauth*
 ```
 
-**Report storage**: Saved to `~/.lalog/reports/YYYY-MM.md` (monthly file, overwritten on each report generation).
+**Report storage**: Saved to `~/.lalog/reports/<start-date>-<range>[<project-slug>].md` with a non-overwriting, date-prefixed filename (e.g. `2026-09-07-this-week-my-project.md`, `2026-09-03-custom.md`). Each range of a different period gets its own file.
 
 ### Aggregate Helpers
 
@@ -443,10 +516,15 @@ All settings are under `lalog.*` in VS Code settings (`settings.json`).
 | `lalog.progressAfterMinutes` | number | `60` | Active minutes between periodic progress-update prompts (timestamped notes) |
 | `lalog.askDescriptionOnStart` | boolean | `true` | Ask for a short description when a session starts |
 | `lalog.autoEndAfterIdleMinutes` | number | `120` | Idle time before auto-close (2h). Sessions are not day-bound; this is the only boundary |
-| `lalog.resumeWindowMinutes` | number | `30` | Recovery: if last activity was within this window on restart, offer resume |
 | `lalog.debugTimeScale` | number | `1` | Divide all time thresholds by this factor. Set 60 to test a "4-hour" session in 4 minutes |
 | `lalog.logTerminalCommands` | boolean | `true` | Record terminal commands (requires shell integration) |
 | `lalog.redactPatterns` | string[] | `["TOKEN", "KEY", "SECRET", "PASSWORD", "PASS=", "API_KEY", "api[-_]?key"]` | Regex patterns redacted from logged terminal commands |
+| `lalog.captureDiffs` | boolean | `true` | Capture unified diffs of file edits at save time (stored in session sidecar) |
+| `lalog.captureTerminal` | boolean | `true` | Capture terminal command line, exit code, duration, and working directory |
+| `lalog.captureTerminalStdout` | boolean | `false` | Also capture terminal stdout (opt-in: requires shell integration, may contain sensitive data) |
+| `lalog.captureAiLog` | boolean | `true` | Log AI interaction metadata (char counts, latency — never prompt/response text) |
+| `lalog.maxDiffChars` | number | `16000` | Maximum characters per diff entry before truncation |
+| `lalog.maxStdoutChars` | number | `32000` | Maximum characters per terminal stdout capture before truncation |
 
 ### Threshold Resolution
 
@@ -465,7 +543,6 @@ thresholdsMs(cfg) → {
   hardSplit: 300 * 60 * 1000 / scale,      // 5h hard limit
   progressAt: 60 * 60 * 1000 / scale,      // periodic progress notes
   autoEndIdle: 120 * 60 * 1000 / scale,
-  resumeWindow: 30 * 60 * 1000 / scale,
   maxGraceExtensions: 3,
 }
 ```
@@ -482,7 +559,9 @@ thresholdsMs(cfg) → {
 | Pause session | `lalog.pauseSession` | Stop the tracking clock (session stays open) |
 | Resume session | `lalog.resumeSession` | Restart the tracking clock from now |
 | Describe now | `lalog.describeNow` | Trigger the describe flow immediately |
-| Generate report | `lalog.report` | Session-centric markdown report (today/week/month) |
+| Keep as background work | `lalog.background` | Mark the current session anonymous (no more labeling prompts on it) |
+| Generate report | `lalog.report` | Session-centric markdown report (range + project scope + custom range) |
+| Export sessions CSV | `lalog.exportCsv` | Dump all sessions to `~/.lalog/exports/sessions-<date>.csv` |
 | Show sessions | `lalog.showSessions` | Focus the sessions sidebar view |
 | Edit session | `lalog.editSession` | Update a session's description |
 | Export files by day | `lalog.exportFilesByDay` | Legacy `files_by_day.txt` export |

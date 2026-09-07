@@ -15,8 +15,9 @@ const th: ThresholdsMs = {
   grace: 30 * MIN,
   hardSplit: 300 * MIN,
   autoEndIdle: 120 * MIN,
-  resumeWindow: 30 * MIN,
   maxGraceExtensions: 3,
+  startDescAt: 10 * MIN,
+  progressAt: 60 * MIN,
 };
 
 test('overnight session spanning midnight is a single session (not day-bound)', () => {

@@ -1,7 +1,15 @@
 node_modules/
 out/
 *.map
+**/*.map
 .gitignore
 .vscode/**
 test/**
+dist-test/**
+src/**
+docs/**
+.playwright-mcp/**
+tsconfig.json
+esbuild.js
+esbuild.test.js
 .mocharc.json

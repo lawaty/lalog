@@ -1,16 +1,22 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
 import { readConfig, thresholdsMs, readAiConfig, AiConfig } from './core/config';
 import { SessionManager } from './core/sessionManager';
 import { SessionStore } from './storage/sessionStore';
-import { buildPaths, ensureDirs, LaLogPaths } from './storage/store';
+import { TechnicalStore } from './storage/technicalStore';
+import { buildPaths, ensureDirs, LaLogPaths, workspaceKey, workspaceName } from './storage/store';
+import { ProjectRegistry } from './storage/projectRegistry';
 import { LaLogPanelProvider } from './ui/panelView';
 import { LaLogStatusBar } from './ui/statusBar';
 import { todayActiveMs, todayUntrackedMs } from './reporting/aggregate';
-import { generateReport, ReportRange, saveReport, rangeStart, rangeEnd, rangeLabel } from './reporting/report';
+import { generateReport, saveReport, calendarDayCount } from './reporting/report';
+import { ReportRange, rangeStart, rangeEnd, rangeLabel } from './reporting/ranges';
 import { exportFilesByDay } from './integrations/legacyExport';
 import { LaLogAiService, OpencodePreflightError } from './opencode/service';
 import type { AnalysisResult } from './opencode/service';
 import { Session } from './core/types';
+import { resolveProject } from './core/projects';
 
 let manager: SessionManager;
 
@@ -21,7 +27,9 @@ export function activate(context: vscode.ExtensionContext): void {
   const th = thresholdsMs(cfg);
 
   const store = new SessionStore({ paths, th });
-  manager = new SessionManager(store, th, paths, cfg.askDescriptionOnStart);
+  const technicalStore = new TechnicalStore(paths.technicalDir);
+  manager = new SessionManager(store, th, paths, cfg.askDescriptionOnStart, cfg, technicalStore);
+  const projectRegistry = new ProjectRegistry(paths);
 
   const wsFolder = () => vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   // Lazy AI service so that when `lalog.ai.enabled` is false, no opencode code
@@ -35,6 +43,19 @@ export function activate(context: vscode.ExtensionContext): void {
     if (!aiService || aiServiceCfg !== live) {
       aiService = new LaLogAiService(live, wsFolder());
       aiServiceCfg = live;
+      // Wire interaction logger on each new service instance
+      aiService.setInteractionLogger((e) => {
+        manager.logAiInteraction({
+          type: 'ai',
+          ts: Date.now(),
+          task: e.task,
+          model: e.model,
+          latencyMs: e.latencyMs,
+          promptChars: e.promptChars,
+          responseChars: e.responseChars,
+          truncated: e.truncated,
+        });
+      });
     }
     return aiService;
   }
@@ -66,15 +87,32 @@ export function activate(context: vscode.ExtensionContext): void {
   const panel = new LaLogPanelProvider(
     () => store.loadAll(),
     () => manager.getSession(),
-    () => ({
-      todayActiveMs: cachedTodayMs,
-      paused: manager.isPaused(),
-      idleGap: th.idleGap,
-    })
+    () => {
+      const folder = vscode.workspace.workspaceFolders?.[0];
+      const p = folder?.uri.fsPath ?? '';
+      return {
+        todayActiveMs: cachedTodayMs,
+        paused: manager.isPaused(),
+        idleGap: th.idleGap,
+        wsKey: p ? workspaceKey(p) : 'no-workspace',
+        wsName: p ? workspaceName(p) : 'No folder',
+        wsPath: p,
+      };
+    },
+    store,
+    projectRegistry,
+    (projectId: string | undefined) => manager.assignProject(projectId)
   );
 
   async function refreshStatus(): Promise<void> {
-    const all = await store.loadAll();
+    statusBar.loading();
+    let all: Session[];
+    try {
+      all = await store.loadAll();
+    } catch {
+      statusBar.update(null, 0, 0, false);
+      return;
+    }
     const today = todayActiveMs(all, Date.now());
     cachedTodayMs = today;
     const now = Date.now();
@@ -96,8 +134,10 @@ export function activate(context: vscode.ExtensionContext): void {
           paused
             ? { label: '$(play) Resume session', id: 'resume' }
             : { label: '$(debug-pause) Pause session', id: 'pause' },
+          { label: '$(circle-slash) Keep as background work', id: 'background' },
           { label: '$(check) End & restart session', id: 'end' },
           { label: '$(calendar) Generate report', id: 'report' },
+          { label: '$(export) Export sessions CSV', id: 'csv' },
         ],
         { title: 'LaLog' }
       );
@@ -105,8 +145,10 @@ export function activate(context: vscode.ExtensionContext): void {
       if (pick.id === 'describe') await vscode.commands.executeCommand('lalog.describeNow');
       if (pick.id === 'pause') await vscode.commands.executeCommand('lalog.pauseSession');
       if (pick.id === 'resume') await vscode.commands.executeCommand('lalog.resumeSession');
+      if (pick.id === 'background') await vscode.commands.executeCommand('lalog.background');
       if (pick.id === 'end') await vscode.commands.executeCommand('lalog.endSessionRestart');
       if (pick.id === 'report') await vscode.commands.executeCommand('lalog.report');
+      if (pick.id === 'csv') await vscode.commands.executeCommand('lalog.exportCsv');
     },
   };
 
@@ -186,26 +228,131 @@ export function activate(context: vscode.ExtensionContext): void {
         { label: 'This week', id: 'week' as ReportRange },
         { label: 'This month', id: 'month' as ReportRange },
         { label: 'Last month', id: 'last-month' as ReportRange },
+        { label: 'Custom range\u2026', id: 'custom' as ReportRange },
       ],
       { title: 'LaLog report range' }
     );
     if (!rangePick) return;
-    const all = await store.loadAll();
-
-    const svc = getAi();
-    let content = await generateReport(all, rangePick.id);
-    if (svc) {
-      const inRange = filterByRange(all, rangePick.id);
-      if (inRange.length) {
-        const narrative = await aiTask('narrative', () =>
-          svc.narrative(rangeLabelOf(rangePick.id), inRange)
-        );
-        if (narrative) {
-          content += `\n## AI Narrative\n\n> Generated by LaLog AI (${readAiConfig().model}). Review before sharing.\n\n${narrative}\n`;
-        }
+    let custom: { start: number; end: number } | undefined;
+    if (rangePick.id === 'custom') {
+      const input = await vscode.window.showInputBox({
+        title: 'Custom report range',
+        placeHolder: 'YYYY-MM-DD...YYYY-MM-DD (max 31 days)',
+        value: `${dayStamp(Date.now())}...${dayStamp(Date.now())}`,
+        ignoreFocusOut: true,
+      });
+      const m = input?.trim().match(/^(\d{4}-\d{2}-\d{2})\D+(\d{4}-\d{2}-\d{2})$/);
+      if (!m) {
+        vscode.window.showInformationMessage('Custom range needs two dates: YYYY-MM-DD...YYYY-MM-DD');
+        return;
       }
+      const start = parseDay(m[1]);
+      const end = parseDay(m[2]);
+      if (end <= start) {
+        vscode.window.showInformationMessage('End date must be after start date.');
+        return;
+      }
+      if (calendarDayCount(start, end) > 31) {
+        vscode.window.showInformationMessage('Custom range is limited to 31 days.');
+        return;
+      }
+      const endInclusive = new Date(end);
+      endInclusive.setDate(endInclusive.getDate() + 1);
+      custom = { start, end: new Date(endInclusive.getFullYear(), endInclusive.getMonth(), endInclusive.getDate()).getTime() };
     }
-    const file = saveReport(paths, content);
+    const projects = projectRegistry.list();
+    const scopePick = await vscode.window.showQuickPick(
+      [{ label: 'All sessions', id: '' }, ...projects.map((p) => ({ label: p.name, id: p.id }))],
+      { title: 'LaLog report scope' }
+    );
+    if (scopePick === undefined) return;
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: 'LaLog: generating report\u2026' },
+      async () => {
+        const all = await store.loadAll();
+        const range = rangePick.id;
+        const projectId = scopePick.id || null;
+
+        let content = await generateReport(all, projects, range, {
+          projectId,
+          activeSession: manager.getSession(),
+          custom,
+        });
+
+        const svc = getAi();
+        if (svc) {
+          const inRange = custom
+            ? all.filter((s) => s.startedAt >= custom.start && s.startedAt < custom.end && s.endedAt)
+            : filterByRange(all, range);
+          if (inRange.length) {
+            const narrative = await aiTask('narrative', () => svc.narrative(rangeLabel(range), inRange));
+            if (narrative) {
+              content += `\n## AI Narrative\n\n> Generated by LaLog AI (${readAiConfig().model}). Review before sharing.\n\n${narrative}\n`;
+            }
+          }
+        }
+
+        const file = saveReport(paths, content, { range, projectId, custom });
+        const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
+        await vscode.window.showTextDocument(doc, { preview: true });
+      }
+    );
+  });
+
+  registerCommand('lalog.background', async () => {
+    const s = manager.getSession();
+    if (!s) {
+      vscode.window.showInformationMessage('No active session.');
+      return;
+    }
+    manager.markBackground();
+    await refreshStatus();
+    vscode.window.showInformationMessage('Kept as background work (anonymous session).');
+  });
+
+  registerCommand('lalog.exportCsv', async () => {
+    const all = await store.loadAll();
+    const projects = projectRegistry.list();
+    const rows = [
+      [
+        'id',
+        'startedAt',
+        'endedAt',
+        'workspace',
+        'project',
+        'type',
+        'activeMinutes',
+        'edits',
+        'saves',
+        'terminal',
+        'fileops',
+        'tasks',
+        'debug',
+        'description',
+      ],
+      ...all.map((s) => {
+        const proj = resolveProject(s, projects);
+        return [
+          s.id,
+          iso(s.startedAt),
+          s.endedAt ? iso(s.endedAt) : '',
+          s.workspaceName,
+          proj?.name ?? '',
+          s.type ?? '',
+          String(s.activeMinutes),
+          String(s.events?.edits ?? 0),
+          String(s.events?.saves ?? 0),
+          String(s.events?.terminal ?? 0),
+          String(s.events?.fileops ?? 0),
+          String(s.events?.tasks ?? 0),
+          String(s.events?.debug ?? 0),
+          (s.description ?? '').replace(/"/g, '""'),
+        ];
+      }),
+    ];
+    const content = rows.map((r) => '"' + r.join('","') + '"').join('\n');
+    const file = path.join(paths.exportsDir, `sessions-${dayStamp(Date.now())}.csv`);
+    fs.writeFileSync(file, content);
     const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
     await vscode.window.showTextDocument(doc, { preview: true });
   });
@@ -229,15 +376,20 @@ export function activate(context: vscode.ExtensionContext): void {
       { title: 'LaLog work analysis range' }
     );
     if (!rangePick) return;
-    const all = await store.loadAll();
-    const inRange = filterByRange(all, rangePick.id);
-    if (!inRange.length) {
-      vscode.window.showInformationMessage('No sessions in that range.');
-      return;
-    }
-    const result = await aiTask('analysis', () => svc.analyze(rangeLabelOf(rangePick.id), inRange));
-    if (!result) return;
-    await renderAnalysis(result);
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: 'LaLog: running work analysis\u2026' },
+      async () => {
+        const all = await store.loadAll();
+        const inRange = filterByRange(all, rangePick.id);
+        if (!inRange.length) {
+          vscode.window.showInformationMessage('No sessions in that range.');
+          return;
+        }
+        const result = await aiTask('analysis', () => svc.analyze(rangeLabelOf(rangePick.id), inRange));
+        if (!result) return;
+        await renderAnalysis(result);
+      }
+    );
   });
 
   registerCommand('lalog.showSessions', () => {
@@ -303,8 +455,33 @@ export function activate(context: vscode.ExtensionContext): void {
     })
   );
 
+  // Losing window focus is the closest stable event to "about to quit" (no
+  // pre-shutdown hook exists). Offer an already-due description then, so the
+  // previous session is described before exiting rather than next launch.
+  context.subscriptions.push(
+    vscode.window.onDidChangeWindowState((e) => {
+      if (!e.focused) manager.onWindowFocusLost();
+    })
+  );
+
   manager.start();
   void refreshStatus();
+
+  // One-time onboarding hosted in the side panel.
+  if (!context.globalState.get<boolean>('lalog.welcomed')) {
+    void context.globalState
+      .update('lalog.welcomed', true)
+      .then(() =>
+        vscode.window
+          .showInformationMessage(
+            'LaLog: tracking your work in the background. Open the panel for sessions, insights, and projects.',
+            'Open panel'
+          )
+          .then((pick) => {
+            if (pick) void vscode.commands.executeCommand('lalog.sessionsView.focus');
+          })
+      );
+  }
 
   // Edge: window focus/visibility doesn't matter; gap model handles AFK.
 }
@@ -324,6 +501,21 @@ function filterByRange(sessions: Session[], range: ReportRange): Session[] {
 
 function rangeLabelOf(range: ReportRange): string {
   return rangeLabel(range);
+}
+
+function dayStamp(t: number): string {
+  const d = new Date(t);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+function parseDay(s: string): number {
+  const [y, m, d] = s.split('-').map(Number);
+  return new Date(y, m - 1, d).getTime();
+}
+
+function iso(t: number): string {
+  return new Date(t).toISOString();
 }
 
 /**

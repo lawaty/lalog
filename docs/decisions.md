@@ -20,6 +20,10 @@
 - [ADR-010: The Only Boundary Is ~2h Idle](#adr-010-the-only-boundary-is-2h-idle)
 - [ADR-011: Optional AI Assistance (amends ADR-005)](#adr-011-optional-ai-assistance-amends-adr-005)
 - [ADR-012: Active-Only Tracking with Idle Confirmation](#adr-012-active-only-tracking-with-idle-confirmation)
+- [ADR-013: Anonymous Sessions as a Conscious Choice](#adr-013-anonymous-sessions-as-a-conscious-choice)
+- [ADR-014: Projects as a Derived Workspace Registry](#adr-014-projects-as-a-derived-workspace-registry)
+- [ADR-015: Insights as Pure Aggregations](#adr-015-insights-as-pure-aggregations)
+- [ADR-018: Technical Detail Capture](#adr-018-technical-detail-capture)
 
 ---
 
@@ -253,7 +257,7 @@ export function thresholdsMs(cfg: WorklogConfig): ThresholdsMs {
 - **Crash recovery** — if VS Code crashes, the snapshot is at most 60 seconds old
 - **State change persistence** — important transitions (describe, wrap) are persisted immediately
 - **Atomic writes** — write to `.tmp` → rename, so a crash mid-write doesn't corrupt the snapshot
-- **No zombie sessions** — on recovery, check idle duration and auto-close if ≥ 2h
+- **No zombie sessions** — any leftover snapshot (abnormal exit only) is auto-closed on load, never resumed
 
 **Implementation**:
 - `SessionManager.scheduleSave()` — called on every state change
@@ -261,11 +265,10 @@ export function thresholdsMs(cfg: WorklogConfig): ThresholdsMs {
 - `SessionStore.saveActive(session)` — atomic snapshot write
 - `SessionStore.loadActive(wsKey)` — load snapshot on recovery
 
-**Recovery flow**:
+**Recovery flow** (see ADR-017 — past sessions are never re-probed):
 1. Load snapshot
-2. Check idle duration (`now - lastActivityAt`)
-3. Decide: auto-close (≥ 2h), resume (< 30min), or continue (30min–2h)
-4. Rebuild in-memory `Machine` from snapshot
+2. Auto-close as `recovery-skip` (`endedAt = lastActivityAt`) — no prompt
+3. Start a fresh session
 
 ---
 
@@ -289,12 +292,11 @@ export function thresholdsMs(cfg: WorklogConfig): ThresholdsMs {
 **Implementation**:
 - `lalog.autoEndAfterIdleMinutes` (default 120) — idle time before auto-close
 - `stateMachine.autoClose()` — returns `endedAt = lastActivityAt`
-- `SessionManager.openWorkspace()` — checks idle duration on recovery
+- `SessionManager.openWorkspace()` — auto-closes any leftover snapshot on recovery (see ADR-017)
 
 **Edge cases**:
-- **30min–2h idle** — session continues, gap uncounted (you took a break but came back)
-- **< 30min idle** — session resumes, `lastActivityAt` reset to avoid gap accrual
-- **≥ 2h idle** — session auto-closes, offer closing note
+- **Restart vs. crash** — a session only survives to "recovery" through an abnormal exit; normal quits end it as `vscode-shutdown`, so a reopen always starts fresh
+- **Leftover snapshot** — always closed as `recovery-skip` without prompting, then a fresh session starts
 
 ---
 
@@ -350,6 +352,131 @@ export function thresholdsMs(cfg: WorklogConfig): ThresholdsMs {
 **Test coverage**: `test/spans.test.ts` — span open/extend/close, in/outside classification, legacy reconstruction, confirmed-idle-outside, and a round-trip run.
 
 
+## ADR-013: Anonymous Sessions as a Conscious Choice
+
+**Status**: Accepted
+
+**Context**: LaLog tracks continuously and asks for descriptions, but not every stretch of work deserves a label — yet the periodic describe/progress-and-recovery prompts treat every session alike. Nagging a user about cleanup sessions (deleting a branch, fiddling with CI) trains them to dismiss prompts. The user asked for a way to say *"record what I did, but keep it anonymous."*
+
+**Decision**:
+1. **`Session.anonymous` flag**: a session can be marked anonymous ("background work") — at the 3-choice start prompt (**Describe… / Keep as background work / Not now**), from the panel detail action, or from the status-bar quick action (`lalog.background`).
+2. **Anonymous sessions are never prompted**: the describe checkpoint (`checkProgress`) and the on-start description offer all skip them; the wrap prompt still applies but hides its "Add/update description" option.
+3. **Describing clears the flag**: any real description (start, checkpoint, edit, closing note) sets `anonymous = false`, so labeling and prompting resume normally. A manual `Describe now` on an anonymous session always works — the flag only suppresses *automatic* prompting.
+4. **One-shot start offer**: the on-start description fires once at the first natural breakpoint after `startDescAt` minutes (`offerStartDescription`), never re-nags; "Not now" just lets the session stay undescribed.
+
+**Rationale**:
+- The choice happens at decision time rather than being toggled silently, so the user never "loses" tracking — anonymous still records time, events, and files; it only stops the labeling prompts.
+- Clearing on describe keeps the flag an explicit, reversible statement, avoiding permanently-dimmed sessions the user forgot about.
+
+**Implementation**: `src/core/types.ts` (`anonymous`), `src/core/sessionManager.ts` (`offerStartDescription`, `applyBackgroundWork`, `cancelDescriptionOffer`, guards in `checkProgress`/`presentDescribe`/`offerPendingCloseNote`/`describeShutdownSession`/`recordCloseNote`), `src/prompts/promptCoordinator.ts` + `describeFlow.ts` (start prompt with `background` choice, wrap option hidden when anonymous), `src/ui/panelView.ts` (dimmed `○` state, "Keep as background work" row action), `src/extension.ts` (`lalog.background`).
+
+**Test coverage**: manual (panels/prompts not host-testable); pure helpers covered by the opinionated start-prompt path — covered indirectly by `test/projects.test.ts`/`test/insights.test.ts` for reporting of anonymous sessions (`*(background work)*`).
+
+
+## ADR-014: Projects as a Derived Workspace Registry
+
+**Status**: Accepted
+
+**Context**: "Projects" let many workspaces share a name and color (the same repo cloned twice, a design repo + a backend repo for one product). Storing a `projectId` on every session is a migration; asking an AI to infer projects is over-engineered. GLM's review suggested a *flat registry* keyed on workspace identity, derived at read time.
+
+**Decision**:
+1. **`ProjectRegistry`** keeps the curated list in a small JSON file (`~/.lalog/projects.json`, version 1) — separate from the append-only `sessions.jsonl`, rewritten atomically via tmp+rename (same pattern as active snapshots).
+2. **Derive-on-read**: `resolveProject(session, projects)` maps a session by its `workspaceKey` when that key is claimed by *exactly one non-archived* project. No session data is rewritten when projects change.
+3. **Explicit override wins**: `Session.projectId` (set from the panel's assign picker) beats any derived claim — including archived projects — so a "wrong" auto-match can be corrected per session without touching the registry.
+4. **Archiving** removes a project from derivation (its explicit assignments and history stay); `PROJECT_COLORS` (10-color palette) picks stable colors by creation index.
+
+**Rationale**:
+- Derivation means projects can be created, renamed, archived, and re-claimed with zero migration of the append-only log — the JSONL stays immutable.
+- A single workspace key matching one project is unambiguous; multiple claims are only resolvable by explicit per-session override or by a curated pick, which is what the UI offers.
+
+**Implementation**: `src/core/projects.ts` (pure `Project`, `resolveProject`, palette), `src/storage/projectRegistry.ts` (CRUD + atomic save), `src/ui/panelView.ts` (Projects tab, chips, assign picker, claim/archive actions), `src/reporting/report.ts` + `insights.ts` (scoping by `resolveProject`).
+
+**Test coverage**: `test/projects.test.ts` — derivation, archived exclusion, explicit-override precedence, color palette.
+
+
+## ADR-015: Insights as Pure Aggregations
+
+**Status**: Accepted
+
+**Context**: The user wants "a glimpse on what takes most of my time" without opening a report file, and an hourly report "whenever I want". Range math and aggregates were previously entangled in `report.ts`, which imported the vscode-bound prompt coordinator — making them untestable and forcing a dataset/profile cycle (`insights.ts → report.ts → insights.ts`).
+
+**Decision**:
+1. **Pure aggregation module** `src/reporting/insights.ts`: `insightsFor()` turns closed (+ the live session) `Session[]` + `Project[]` into a UI-ready snapshot (totals, in/out split, per-project, per-day, top files, 24-cell day timeline). `effectiveMs()` adds a live session's tail capped at the idle gap; `hourlyBreakdown()` gives the report its per-hour lines.
+2. **Range math moved to pure `src/reporting/ranges.ts`** and re-exported by `report.ts` — breaking the insight↔report cycle and letting tests import aggregates without the vscode-bound module.
+3. **Live session included**: the in-progress session joins today's insights/report figures with its idle-gap-capped tail, so "today" is always right while you work.
+4. **Report UX**: range picker gains a 31-day custom range; next picker scopes to any project; single-day ranges print the hourly log; `saveReport` writes date-prefixed, non-overwriting files (`reports/<start-date>-<rangekey>[-<slug>].md`, local date), so each period/custom range gets its own file instead of overwriting the month's.
+
+**Rationale**:
+- Aggregates over plain data with `now`/`idleGap` injected are deterministic and unit-testable in node without VS Code — the whole panel/report stack feeds off one aggregation layer.
+- Deriving everything at render time keeps the append-only log the single source of truth (classifying a span, resolving a project, and injecting the live tail all happen when a snapshot/report is built).
+
+**Implementation**: `src/reporting/ranges.ts` (pure), `src/reporting/insights.ts` (aggregates + timeline + hourly log), `src/reporting/report.ts` (scoping, custom range, hourly log, filenames), `src/ui/panelView.ts` (Insights tab, timeline cells, period toggle), `src/extension.ts` (`lalog.report` rework, CSV export).
+
+**Test coverage**: `test/insights.test.ts` — effectiveMs tails/cap, per-range totals, per-project aggregation with explicit+derived mapping, vscode/outside split, 24-hour timeline, hourly breakdown, month boundaries.
+
+## ADR-016: Describe Before Exit via Focus-Loss Prompt
+
+**Status**: Accepted
+
+**Context**: The user reported being asked to describe "the previous session" on every VS Code launch, by which point context is cold — they wanted the question asked *before* exiting, like VS Code's unsaved-changes prompt. There is **no stable pre-shutdown extension API** (`workspace.onWillShutdown` is a proposed API only; `deactivate()` is synchronous and time-limited), so a blocking close dialog is impossible in a published extension.
+
+**Decision**:
+1. **Focus-loss trigger** `src/core/sessionManager.ts::onWindowFocusLost()`: subscribed to `window.onDidChangeWindowState` in `activate()`; when the window loses focus (~about to exit) and the live session is already due-for-description, `presentDescribe(null)` runs immediately while context is fresh.
+2. **Conservative guard** `src/core/focusPrompt.ts::shouldPromptOnFocusLost()`: only `describePending` sessions without a description (and not anonymous) trigger — a quick alt-tab never nags.
+3. **Per-session cooldown** (`focusPrompted`): the prompt fires at most once per describe-due window; reset on a fresh session and after `described`/`background`.
+4. **No startup fallback**: the launch-time `describeShutdownSession()` fallback (recovering descriptions of crash/force-quit sessions) was removed by ADR-017 — LaLog never asks about a closed session again.
+
+**Rationale**: The focus-loss event is the closest stable proxy for "about to quit"; it fires before process death, letting the user answer in-context. The conservative guard + cooldown keep it quiet. (The original rationale also relied on the startup fallback for lost descriptions; per ADR-017 the user explicitly prefers never being asked retroactively, so a missed focus-loss prompt is simply accepted.)
+
+**Implementation**: `src/core/focusPrompt.ts` (pure guard), `src/core/sessionManager.ts` (trigger + cooldown), `src/extension.ts` (event subscription), `test/focusPrompt.test.ts`.
+
+**Test coverage**: `test/focusPrompt.test.ts` — guard matrix (describe-due, no session, cooldown, anonymous, existing description, non-due states).
+
+## ADR-017: Never Prompt About a Closed Session
+
+**Status**: Accepted
+
+**Context**: The user wants LaLog to **never** ask about a session that is already closed. Previously three paths did exactly that: (1) `describeShutdownSession()` offered an optional description for the most recent `vscode-shutdown`-ended session at every launch; (2) `finishRecovered()` asked a closing note for any leftover snapshot on recovery; (3) an auto-idle-ended session got an `offerPendingCloseNote()` closing note on the next activity. Separately, a leftover snapshot within `resumeWindowMinutes` (30 min) was resumed instead of closed.
+
+**Decision**:
+1. **No prompts about past sessions** — the startup shutdown-description prompt, the recovery closing-note prompt, and the pending-closing-note prompt are all removed (`askShutdownDescription`, `askClosingNote` deleted).
+2. **Leftover snapshots always auto-close** — on launch, any active snapshot (only possible after an abnormal exit) is closed as `recovery-skip` with `endedAt = lastActivityAt`, **without prompting**, and a fresh session starts. The resume branch is removed along with `resumeWindowMinutes`/`recoverActiveMachine`.
+3. **Closure is the only boundary** — a reopened window always begins a new session; a session left undescribed stays flagged (`needsDescription`) for the sessions view but is never re-probed.
+4. **Explicit ends still ask** — `recordCloseNote` (`askSessionClose`) survives: the user is present at the moment they manually end/wrap a session, so a closing note there is not "about a closed session".
+
+**Rationale**: Descriptions are best gathered while a session is still live (start prompt, checkpoint, progress notes, focus-loss). Once closed, context is gone and retroactive prompts were the exact complaint addressed here; any formatting gap is the user's accepted trade-off.
+
+**Implementation**: `src/core/sessionManager.ts` (`openWorkspace`, `finishRecovered`, removal of `describeShutdownSession`/`pendingClose`/resume branch), `src/prompts/promptCoordinator.ts` (removed `askShutdownDescription`, `askClosingNote`), `src/core/config.ts` (removed `resumeWindowMinutes`). ADR-016's "startup fallback" is superseded.
+
+**Test coverage**: typecheck + full suite (no runtime path change to pure modules).
+
+
+
+## ADR-018: Technical Detail Capture
+
+**Status**: Accepted
+
+**Context**: LaLog's session model captures *counters* (edits, saves, terminal events) but not the *content* of work. A session showing "142 edits, 23 saves, 8 terminal commands" tells you *that* you worked but not *what* you did. Reports and AI descriptions lack the technical detail needed to reconstruct what actually happened.
+
+**Decision**:
+1. **Per-session sidecar JSONL** (`~/.lalog/technical/<sessionId>.jsonl`): technical detail lives in a separate file per session, not in the main `sessions.jsonl`. This keeps the main store compact (it stores counters, descriptions, git data) while preserving full technical context.
+2. **File diffs at save time**: unified diffs are generated from successive file saves using the `diff` package. First save for a path produces a new-file diff; subsequent saves produce standard patches. Binary files (null byte in first 8KB) are skipped. Diffs are redacted and capped at 16,000 chars.
+3. **Terminal capture via shell integration**: command line, exit code, duration, and cwd are always captured when `onDidStartTerminalShellExecution` is available (VS Code ≥ 1.93). Stdout capture is **opt-in** (`lalog.captureTerminalStdout`, default off) because: (a) `read()` must attach at command start to not miss data, (b) stdout may contain sensitive data, and (c) ANSI sequences are lossy to strip.
+4. **AI interaction metadata only**: char counts, latency, model, and task name are logged. Prompt and response text are never stored — this maintains the data-policy contract that only compact summaries enter the AI.
+5. **Six config toggles**: `captureDiffs`, `captureTerminal`, `captureTerminalStdout`, `captureAiLog`, `maxDiffChars`, `maxStdoutChars` — all independently controllable.
+
+**Rationale**:
+- **Sidecar vs main store**: diffs and terminal output are large and rarely needed for aggregate queries. A separate file avoids bloating `sessions.jsonl` (which is read in full for reports) while keeping technical detail available for drill-down and AI context.
+- **Diffs at save time**: capturing at save (not edit) ensures the diff represents a deliberate checkpoint. The `diff` package produces standard unified patches that are human-readable and AI-parseable.
+- **Stdout opt-in**: `TerminalShellExecution.read()` returns an `AsyncIterable` that must be consumed immediately in the start handler. This is a fire-and-forget async operation. Stdout may contain ANSI escape sequences that are stripped (lossy), and may contain sensitive data. The opt-in default protects users who don't want this level of detail.
+- **AI log counts only**: storing prompt/response text would violate the local-first privacy model and bloat the sidecar. Char counts and latency are sufficient to understand AI usage patterns.
+- **Map-based diff tracking**: the `DiffCapture` class keeps a `Map<string, string>` of last-saved content (capped at 100 paths with LRU eviction). This is in-memory only and resets on session end.
+
+**Implementation**: `src/capture/diffCapture.ts`, `src/capture/terminalCapture.ts`, `src/capture/aiLog.ts`, `src/capture/redactText.ts` (pure modules), `src/storage/technicalStore.ts` (sidecar storage), `src/core/sessionManager.ts` (wiring), `src/opencode/service.ts` (AI interaction logging), `src/extension.ts` (service-to-manager wiring).
+
+**Test coverage**: `test/diffCapture.test.ts` (first-save newFile, subsequent patches, binary skip, redaction, cap, reset, LRU), `test/terminalCapture.test.ts` (stripAnsi, confidence mapping, duration, stdout absent/capped/redacted, clearInFlight), `test/aiLog.test.ts` (shape, truncated passthrough), `test/redactText.test.ts` (compile, invalid skip, case-insensitive global), `test/technicalStore.test.ts` (append+read round-trip, rotation, malformed skip, delete, pathFor shape).
+
+---
 
 ## Related Pages
 

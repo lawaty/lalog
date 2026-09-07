@@ -8,7 +8,7 @@
 
 ## Overview
 
-LaLog (formerly "Worklog") is a VS Code extension (v0.2.0) that passively tracks your coding sessions — capturing edits, saves, terminal commands, file operations, debug sessions, and tasks — then prompts you at natural breakpoints to describe what you were working on. All data stays local in `~/.lalog/`.
+LaLog (formerly "Worklog") is a VS Code extension (v0.3.1) that passively tracks your coding sessions — capturing edits, saves, terminal commands, file operations, debug sessions, and tasks — then prompts you at natural breakpoints to describe what you were working on. All data stays local in `~/.lalog/`.
 
 AI assistance is **optional and off by default**: when enabled, LaLog uses the local `opencode` CLI to help draft session descriptions, add a narrative to reports, and produce a work review. It never captures or sends file contents or terminal output — only the compact session summary (file paths, counters, git branch, commit subjects).
 
@@ -86,6 +86,12 @@ Core settings are under `lalog.*`. AI settings are under `lalog.ai.*`.
 | `lalog.ai.model` | `opencode/big-pickle` | Model ID for AI requests |
 | `lalog.ai.opencodePath` | `opencode` | Path to the opencode CLI binary |
 | `lalog.ai.data.sendCommitSubjects` | `true` | Send commit subjects (never diffs/bodies) |
+| `lalog.captureDiffs` | boolean | `true` | Capture unified diffs at save time |
+| `lalog.captureTerminal` | boolean | `true` | Capture terminal command metadata |
+| `lalog.captureTerminalStdout` | boolean | `false` | Capture terminal stdout (opt-in) |
+| `lalog.captureAiLog` | boolean | `true` | Log AI interaction metadata |
+| `lalog.maxDiffChars` | number | `16000` | Max characters per diff entry |
+| `lalog.maxStdoutChars` | number | `32000` | Max characters per terminal stdout |
 
 See [Features → Configuration](features.md#configuration) for the full list.
 

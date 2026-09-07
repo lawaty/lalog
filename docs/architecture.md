@@ -45,7 +45,7 @@ flowchart TB
         AT["activityTracker.ts<br/>VS Code event listener"]
         BD["breakpoints.ts<br/>Natural breakpoint detector"]
         CFG["config.ts<br/>Settings + thresholds"]
-        REC["sessionManager.ts<br/>machine rebuild on open"]
+        PRJ["projects.ts<br/>Project model + resolve (pure)"]
         TYP["types.ts<br/>Shared types"]
     end
 
@@ -56,11 +56,22 @@ flowchart TB
 
     subgraph storage["storage/"]
         SS["sessionStore.ts<br/>Session CRUD"]
+        PR["projectRegistry.ts<br/>Projects registry (atomic JSON)"]
         ST["store.ts<br/>Filesystem primitives"]
+        TS["technicalStore.ts<br/>Technical sidecar JSONL"]
+    end
+
+    subgraph capture["capture/"]
+        DC["diffCapture.ts<br/>Unified diffs at save"]
+        TC["terminalCapture.ts<br/>Shell execution capture"]
+        AL["aiLog.ts<br/>AI interaction metadata"]
+        RT["redactText.ts<br/>Redaction utilities"]
     end
 
     subgraph reporting["reporting/"]
         AGG["aggregate.ts<br/>todayActiveMs, todayUntrackedMs"]
+        INS["insights.ts<br/>Pure per-period aggregations"]
+        RNG["ranges.ts<br/>Range start/end math (pure)"]
         RPT["report.ts<br/>Markdown report generation"]
     end
 
@@ -89,6 +100,9 @@ flowchart TB
     SEM --> PC
     SEM --> SS
     SEM --> CFG
+    SEM --> DC
+    SEM --> TC
+    SEM --> TS
 
     PC --> DF
     SS --> ST
@@ -102,12 +116,13 @@ flowchart TB
 
 | Module | Files | Responsibility |
 |--------|-------|----------------|
-| **core/** | `stateMachine.ts`, `sessionManager.ts`, `activityTracker.ts`, `breakpoints.ts`, `config.ts`, `spans.ts`, `types.ts` | Pure state machine, session orchestration (idle/progress/auto-end checks), VS Code event capture, breakpoint detection, configuration, active-span arithmetic |
-| **prompts/** | `promptCoordinator.ts`, `describeFlow.ts` | Prompt mutex (one at a time, min spacing), 2-step describe UI (type picker → input box), on-start/progress/close note prompts |
-| **storage/** | `sessionStore.ts`, `store.ts` | Session CRUD, JSONL append, atomic snapshots, filesystem primitives |
-| **reporting/** | `aggregate.ts`, `report.ts`, `spans.ts` | Today's active/untracked time, session-centric markdown reports, in/out-of-VS-Code split |
+| **core/** | `stateMachine.ts`, `sessionManager.ts`, `activityTracker.ts`, `breakpoints.ts`, `config.ts`, `spans.ts`, `projects.ts`, `types.ts` | Pure state machine, session orchestration (idle/progress/auto-end checks), VS Code event capture, breakpoint detection, configuration, active-span arithmetic, project resolution (derive-on-read + explicit override) |
+| **capture/** | `diffCapture.ts`, `terminalCapture.ts`, `aiLog.ts`, `redactText.ts` | Unified diff generation at file save, terminal shell execution capture (command + exit code + duration + optional stdout), AI interaction metadata (char counts only), redaction utilities |
+| **prompts/** | `promptCoordinator.ts`, `describeFlow.ts` | Prompt mutex (one at a time, min spacing), 2-step describe UI (type picker → input box), 3-choice start prompt (describe / background / later), on-start/progress/close note prompts, anonymous-sensitive option hiding |
+| **storage/** | `sessionStore.ts`, `projectRegistry.ts`, `store.ts`, `technicalStore.ts` | Session CRUD, JSONL append, atomic snapshots, curated `projects.json` registry (atomic rewrite), per-session technical sidecar JSONL, filesystem primitives |
+| **reporting/** | `aggregate.ts`, `report.ts`, `insights.ts`, `ranges.ts`, `spans.ts` | Today's active/untracked time, session-centric markdown reports (project scope, custom range, hourly log), pure period aggregations + 24h timeline, range math, in/out-of-VS-Code split |
 | **integrations/** | `git.ts`, `legacyExport.ts` | Git branch/commit annotation, legacy `files_by_day.txt` export |
-| **ui/** | `statusBar.ts`, `panelView.ts` | Status bar (live duration + description), single webview panel (scrollable sessions grouped by day, with the "Current Session" card as a fixed non-scrolling footer) |
+| **ui/** | `statusBar.ts`, `panelView.ts` | Status bar (live duration + description), single webview panel — **Sessions / Insights / Projects** tabs (scrollable, day-grouped sessions with project filter chips + anonymous states), with the "Current Session" card as a fixed non-scrolling footer |
 
 ---
 
@@ -248,24 +263,13 @@ sequenceDiagram
     SM->>SS: loadActive(wsKey)
 
     alt Existing session found
-        SS-->>SM: Session snapshot
-        SM->>SM: Check idle duration
-        alt idle >= 2h (autoEndIdle)
-            SM->>PC: askClosingNote(session)
-            PC->>User: "Unfinished session — closing note?"
-            User-->>PC: text or Esc
-            SM->>SS: close(session, 'auto-idle', lastActivityAt)
-            SM->>FSM: newMachine() → idle
-        else idle < 30min (resumeWindow)
-            SM->>FSM: recoverActiveMachine(session)
-            Note over SM: Resume same session
-        else 30min <= idle < 2h
-            SM->>FSM: recoverActiveMachine(session)
-            Note over SM: Same session continues,<br/>gap uncounted
-        end
+        SS-->>SM: Session snapshot (leftover from abnormal exit)
+        SM->>SM: Auto-close without prompting
+        SM->>SS: close(session, 'recovery-skip', lastActivityAt)
+        SM->>SS: newSession(wsKey, wsName, now)
+        SM->>FSM: startSession(machine, now) → active
     else No existing session
         SM->>SS: newSession(wsKey, wsName, now)
-        SM->>PC: describeShutdownSession (optional, if last ended on close)
         SM->>FSM: startSession(machine, now) → active
         Note over SM: Always auto-start — never untracked
     end
@@ -382,7 +386,7 @@ flowchart TB
         ACTIVE["active/<br/>&lt;wsKey&gt;.json"]
         JSONL["sessions.jsonl"]
         EXPORTS["exports/<br/>&lt;slug&gt;/files_by_day.txt"]
-        REPORTS["reports/<br/>YYYY-MM.md"]
+        REPORTS["reports/<br/>&lt;start-date&gt;-&lt;range&gt;[-&lt;slug&gt;].md"]
     end
 
     SS["SessionStore"]
@@ -420,28 +424,19 @@ flowchart TB
 ```mermaid
 flowchart TD
     START["VS Code starts / workspace opens"] --> LOAD["SessionStore.loadActive(wsKey)"]
-    LOAD --> EXISTS{Session exists?}
+    LOAD --> EXISTS{Snapshot exists?}
 
     EXISTS -->|No| NEW["createSession + startSession → active<br/>always auto-start"]
-    EXISTS -->|Yes| CHECK["Check idle duration"]
+    EXISTS -->|Yes| RECOV_SKIP["Auto-close as recovery-skip<br/>(no prompt) then start fresh"]
 
-    CHECK --> IDLE2H{idle >= 2h?}
-    IDLE2H -->|Yes| AUTOCLOSE["Auto-close session<br/>endedAt = lastActivityAt<br/>Ask closing note"]
-    IDLE2H -->|No| IDLE30M{idle < 30min?}
-
-    IDLE30M -->|Yes| RESUME["Resume session<br/>Reset lastActivityAt to now<br/>(avoid gap accrual)"]
-    IDLE30M -->|No| RECOV_SKIP["Auto-close as recovery-skip<br/>then start fresh"]
-
-    AUTOCLOSE --> IDLE["state = idle"]
-    RESUME --> ACTIVE["state = active"]
-    RECOV_SKIP --> ACTIVE
+    RECOV_SKIP --> ACTIVE["state = active"]
     NEW --> ACTIVE
 ```
 
 ### Recovery Guarantees
 
-1. **No zombie sessions** — only a real activity event resets the idle clock, never a periodic timer or window reopen
-2. **No gap accrual on reopen** — when recovering, `lastActivityAt` is set to `now` so the first event doesn't accrue a giant gap
+1. **No zombie sessions** — a snapshot only survives an abnormal exit (normal quits close the session); any leftover is auto-closed as `recovery-skip` on load, never resumed
+2. **No gap accrual** — the fresh session's first activity event resets `lastActivityAt`, so the gap since the closed snapshot isn't accrued into the new session
 3. **Snapshot persistence** — active sessions are saved every 60 seconds (heartbeat) and on every state change
 4. **Atomic snapshots** — write to `.tmp` then rename, so a crash mid-write doesn't corrupt the snapshot
 

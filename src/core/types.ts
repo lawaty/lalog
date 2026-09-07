@@ -53,6 +53,10 @@ export interface Session {
   description?: string;
   notes: { at: number; text: string }[];
   needsDescription: boolean;
+  /** User chose "keep as background work": no labeling prompts, shown dimmed. */
+  anonymous?: boolean;
+  /** Manual project override. Absence = derive from workspaceKey claims. */
+  projectId?: string;
   events: {
     edits: number;
     saves: number;
@@ -67,8 +71,47 @@ export interface Session {
   closedReason?: ClosedReason;
   /** Contiguous active periods (start/end). Sum equals activeMinutes. */
   activeSpans: ActiveSpan[];
+  /** Absolute path to the technical detail sidecar JSONL file (set on first write). */
+  technicalSidecar?: string;
   /** Raw timestamps of detected VS Code activity (edits/saves/terminal/etc). */
   activityTs: number[];
 }
 
 export type TrackedEvent = 'edit' | 'save' | 'terminal' | 'fileop' | 'editor' | 'debug' | 'task';
+
+/** Unified diff captured at save time. */
+export interface TechnicalDiff {
+  type: 'diff';
+  ts: number;
+  path: string;
+  diff: string;
+  linesAdded: number;
+  linesRemoved: number;
+  newFile: boolean;
+}
+
+/** Terminal command execution captured via shell integration. */
+export interface TechnicalTerminal {
+  type: 'terminal';
+  ts: number;
+  commandLine: string;
+  exitCode: number | null;
+  durationMs: number;
+  cwd?: string;
+  stdout?: string;
+  confidence: 'low' | 'medium' | 'high';
+}
+
+/** AI interaction metadata (char counts only — never prompt/response text). */
+export interface TechnicalAiInteraction {
+  type: 'ai';
+  ts: number;
+  task: string;
+  model: string;
+  latencyMs: number;
+  promptChars: number;
+  responseChars: number;
+  truncated: boolean;
+}
+
+export type TechnicalEntry = TechnicalDiff | TechnicalTerminal | TechnicalAiInteraction;

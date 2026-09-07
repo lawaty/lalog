@@ -4,9 +4,9 @@ import { Session } from '../core/types';
  * Redaction + size cap for AI egress.
  *
  * Only the compact `Session` summary is ever sent: file paths, edit/save/terminal
- * counters, git branch, and (optionally) commit subjects. File contents and
- * terminal command text are never captured by LaLog in the first place, so they
- * can never be sent.
+ * counters, git branch, and (optionally) commit subjects. File diffs and terminal
+ * text are captured locally in a per-session sidecar (technical JSONL) and are
+ * never sent to the AI — only the compact Session summary enters the prompt.
  */
 
 const MAX_SUBJECTS = 15;

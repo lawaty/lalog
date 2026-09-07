@@ -13,6 +13,12 @@ export type WrapResult =
   | { choice: 'add-description' }
   | { choice: 'skipped' };
 
+export type StartPromptResult =
+  | { choice: 'described'; text: string }
+  | { choice: 'background' }
+  | { choice: 'later' }
+  | null;
+
 export class PromptCoordinator {
   private visible = false;
   private lastShownAt = 0;
@@ -61,65 +67,44 @@ export class PromptCoordinator {
     try {
       const activeH = fmtDuration(session.activeMinutes);
       const desc = session.description ? ` "${session.description}"` : '';
-      const pick = await vscode.window.showQuickPick(
-        [
-          { label: '$(split-horizontal) Wrap session & start a new one', description: `close "${session.workspaceName}"` },
-          { label: '$(clock) Extend 30 min', description: 'keep working, longer prompt later' },
-          { label: '$(pencil) Add/update description', description: 'describe before wrapping' },
-          { label: '$(mute) Skip', description: 'handle in the sessions view' },
-        ],
-        { title: `Session${desc} at ${activeH} — wrap it up?`, placeHolder: 'Choose', ignoreFocusOut: true }
-      );
+      const items: (vscode.QuickPickItem & { choice: WrapResult['choice'] })[] = [
+        { label: '$(split-horizontal) Wrap session & start a new one', description: `close "${session.workspaceName}"`, choice: 'wrap-new' },
+        { label: '$(clock) Extend 30 min', description: 'keep working, longer prompt later', choice: 'extend' },
+      ];
+      if (!session.anonymous) {
+        items.push({ label: '$(pencil) Add/update description', description: 'describe before wrapping', choice: 'add-description' });
+      }
+      items.push({ label: '$(mute) Skip', description: 'handle in the sessions view', choice: 'skipped' });
+      const pick = await vscode.window.showQuickPick(items, {
+        title: `Session${desc} at ${activeH} — wrap it up?`,
+        placeHolder: 'Choose',
+        ignoreFocusOut: true,
+      });
       if (!pick) return { choice: 'skipped' };
-      if (pick.label.includes('Wrap session')) return { choice: 'wrap-new' };
-      if (pick.label.includes('Extend 30')) return { choice: 'extend' };
-      if (pick.label.includes('description')) return { choice: 'add-description' };
+      if (pick.choice === 'wrap-new') return { choice: 'wrap-new' };
+      if (pick.choice === 'extend') return { choice: 'extend' };
+      if (pick.choice === 'add-description') return { choice: 'add-description' };
       return { choice: 'skipped' };
     } finally {
       this.release();
     }
   }
 
-  /** Closing-note prompt on recovery (session went idle >2h with no note). */
-  async askClosingNote(session: Session): Promise<string | null> {
-    if (!(await this.acquire())) return null;
-    try {
-      const activeH = fmtDuration(session.activeMinutes);
-      const text = await vscode.window.showInputBox({
-        title: `Unfinished session "${session.workspaceName}" (${activeH} active)`,
-        value: session.description ?? '',
-        placeHolder: 'closing note (what got done)?',
-        prompt: 'Enter to save · Esc to skip — can add later from sessions view.',
-        ignoreFocusOut: true,
-      });
-      return text === undefined ? null : text;
-    } finally {
-      this.release();
-    }
-  }
-
-  /** Ask for an optional description of a session that VS Code shutdown ended. */
-  async askShutdownDescription(session: Session): Promise<string | null> {
-    if (!(await this.acquire())) return null;
-    try {
-      const activeH = fmtDuration(session.activeMinutes);
-      const text = await vscode.window.showInputBox({
-        title: `Describe your last session in "${session.workspaceName}" (${activeH} active)`,
-        value: session.description ?? '',
-        placeHolder: 'optional — e.g. "fixed the payment parsing bug"',
-        prompt: 'It was ended when VS Code closed. Optional · Esc to skip — add later from sessions view.',
-        ignoreFocusOut: true,
-      });
-      return text === undefined ? null : text.trim() ? text.trim() : null;
-    } finally {
-      this.release();
-    }
-  }
-
   /** Optional description recorded when a session starts. `prefill` may seed continuity from a previous session. */
-  async askSessionStart(session: Session, prefill?: string): Promise<string | null> {
+  async askSessionStart(session: Session, prefill?: string): Promise<StartPromptResult> {
     if (!(await this.acquire())) return null;
     try {
+      const pick = await vscode.window.showQuickPick(
+        [
+          { label: '$(pencil) Describe…', description: 'pick a type and write a short description', choice: 'describe' },
+          { label: '$(mute) Keep as background work', description: 'no description — LaLog stops asking about this session', choice: 'background' },
+          { label: '$(clock) Not now', description: 'the checkpoint prompt will ask later', choice: 'later' },
+        ],
+        { title: `Session started · ${session.workspaceName}`, placeHolder: 'What are you working on?', ignoreFocusOut: true }
+      );
+      if (!pick) return { choice: 'later' };
+      if (pick.choice === 'background') return { choice: 'background' };
+      if (pick.choice === 'later') return { choice: 'later' };
       const text = await vscode.window.showInputBox({
         title: `Session started · ${session.workspaceName} — what are you working on?`,
         value: prefill ?? buildPrefill(session),
@@ -127,7 +112,9 @@ export class PromptCoordinator {
         prompt: 'Optional · Esc to skip — add later from the sessions view.',
         ignoreFocusOut: true,
       });
-      return text === undefined ? null : text.trim() ? text.trim() : null;
+      if (text === undefined) return { choice: 'later' };
+      const trimmed = text.trim();
+      return trimmed ? { choice: 'described', text: trimmed } : { choice: 'later' };
     } finally {
       this.release();
     }

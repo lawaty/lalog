@@ -14,6 +14,7 @@ export const SESSION_TYPES: SessionType[] = [
 
 export type DescribeResult =
   | { choice: 'described'; type: SessionType; text: string }
+  | { choice: 'background' }
   | { choice: 'later' }
   | { choice: 'skipped' };
 
@@ -35,8 +36,9 @@ export async function runDescribeFlow(
 ): Promise<DescribeResult> {
   const { sameAsLast, aiDraft } = opts;
   const prefill = buildPrefill(s);
+  const anonymous = !!s.anonymous;
 
-  const pickItems: (vscode.QuickPickItem & { t: SessionType | 'same' | 'later' | 'ai' })[] = [
+  const pickItems: (vscode.QuickPickItem & { t: SessionType | 'same' | 'later' | 'ai' | 'background' })[] = [
     ...SESSION_TYPES.map((t) => ({ label: t, t } as vscode.QuickPickItem & { t: SessionType })),
   ];
   if (sameAsLast) {
@@ -53,6 +55,9 @@ export async function runDescribeFlow(
       t: 'ai',
     } as vscode.QuickPickItem & { t: SessionType | 'ai' });
   }
+  if (!anonymous) {
+    pickItems.push({ label: '$(mute) Keep as background work', detail: 'no description — LaLog stops asking about this session', t: 'background' } as vscode.QuickPickItem & { t: 'background' });
+  }
   pickItems.push({ label: '$(clock) Later', detail: 'skip for now, add from backlog', t: 'later' } as vscode.QuickPickItem & {
     t: SessionType | 'later';
   });
@@ -64,6 +69,7 @@ export async function runDescribeFlow(
   });
   if (!chosen) return { choice: 'skipped' };
   if (chosen.t === 'later') return { choice: 'later' };
+  if (chosen.t === 'background') return { choice: 'background' };
   if (chosen.t === 'ai' && aiDraft) {
     const draft = await vscode.window.withProgress(
       { location: vscode.ProgressLocation.Notification, title: 'LaLog: drafting description with AI…' },

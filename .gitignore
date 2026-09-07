@@ -16,6 +16,9 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
+# Browser test harness debug artifacts
+.playwright-mcp/
+
 # Editor / OS
 .vscode/*
 !.vscode/launch.json
