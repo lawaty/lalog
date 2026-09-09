@@ -28,7 +28,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const store = new SessionStore({ paths, th });
   const technicalStore = new TechnicalStore(paths.technicalDir);
-  manager = new SessionManager(store, th, paths, cfg.askDescriptionOnStart, cfg, technicalStore);
+  manager = new SessionManager(store, th, paths, cfg, technicalStore);
   const projectRegistry = new ProjectRegistry(paths);
 
   const wsFolder = () => vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
@@ -195,7 +195,7 @@ export function activate(context: vscode.ExtensionContext): void {
   });
 
   registerCommand('lalog.endSession', async () => {
-    const s = await manager.endSessionWithNote('user');
+    const s = await manager.endSession('user');
     if (s) {
       const ws = vscode.workspace.workspaceFolders?.[0];
       if (ws) {
@@ -455,15 +455,6 @@ export function activate(context: vscode.ExtensionContext): void {
     })
   );
 
-  // Losing window focus is the closest stable event to "about to quit" (no
-  // pre-shutdown hook exists). Offer an already-due description then, so the
-  // previous session is described before exiting rather than next launch.
-  context.subscriptions.push(
-    vscode.window.onDidChangeWindowState((e) => {
-      if (!e.focused) manager.onWindowFocusLost();
-    })
-  );
-
   manager.start();
   void refreshStatus();
 
@@ -568,7 +559,6 @@ ${a.summary ?? ''}
 
 export async function deactivate(): Promise<void> {
   // End any active session (recorded as 'vscode-shutdown') so it isn't left as a
-  // dangling recoverable snapshot. VS Code's deactivate() is synchronous and
-  // time-limited, so the optional description is collected on next launch.
+  // dangling recoverable snapshot. VS Code's deactivate() is synchronous and time-limited.
   await manager.shutdown();
 }

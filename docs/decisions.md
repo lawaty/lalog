@@ -23,7 +23,12 @@
 - [ADR-013: Anonymous Sessions as a Conscious Choice](#adr-013-anonymous-sessions-as-a-conscious-choice)
 - [ADR-014: Projects as a Derived Workspace Registry](#adr-014-projects-as-a-derived-workspace-registry)
 - [ADR-015: Insights as Pure Aggregations](#adr-015-insights-as-pure-aggregations)
+- [ADR-016: Describe Before Exit via Focus-Loss Prompt (removed)](#adr-016-describe-before-exit-via-focus-loss-prompt-removed)
+- [ADR-017: Never Prompt About a Closed Session](#adr-017-never-prompt-about-a-closed-session)
 - [ADR-018: Technical Detail Capture](#adr-018-technical-detail-capture)
+- [ADR-019: No Description Prompts on Close + Text-First Describe](#adr-019-no-description-prompts-on-close--text-first-describe)
+- [ADR-020: Remove the Describe-Before-Exit Prompt](#adr-020-remove-the-describe-before-exit-prompt)
+- [ADR-021: Remove the On-Start Description Prompt](#adr-021-remove-the-on-start-description-prompt)
 
 ---
 
@@ -336,7 +341,7 @@ export function thresholdsMs(cfg: WorklogConfig): ThresholdsMs {
 
 **Decision**:
 1. **Active-only time**: `Session.activeMinutes` is the sum of gap-based active runs (contiguous activity ≤ `idleGapMs` apart), stored as **milliseconds**.
-2. **Idle confirmation**: after `idleConfirmAfterMinutes` (15) of no VS Code activity, the heartbeat fires "Are you still there?". *Yes* keeps the current span open — the idle stretch is counted as active, but is **not** VS Code activity. *No* ends the session. This makes confirmed-outside work count while keeping it separable.
+2. **Idle confirmation**: after `idleConfirmAfterMinutes` (15) of no VS Code activity, the heartbeat fires "Are you still there?". *Yes* keeps the current span open — the idle stretch is counted as active, but is **not** VS Code activity. *I was away and came back* trims the idle window back to the moment the prompt was asked (so time spent away after the prompt doesn't count) and keeps the session running. *No* ends the session, also trimming to the prompt moment first. This makes confirmed-outside work count while keeping it separable.
 3. **Untagged spans, classified at filter time**: `Session.activeSpans` store contiguous runs without a source tag. A span is *in VS Code* iff its `end` timestamp is present in `Session.activityTs` (outside spans end at a confirmation timestamp, never at a recorded activity). Legacy sessions without spans are reconstructed from `activityTs` gap analysis.
 
 **Rationale**:
@@ -356,21 +361,20 @@ export function thresholdsMs(cfg: WorklogConfig): ThresholdsMs {
 
 **Status**: Accepted
 
-**Context**: LaLog tracks continuously and asks for descriptions, but not every stretch of work deserves a label — yet the periodic describe/progress-and-recovery prompts treat every session alike. Nagging a user about cleanup sessions (deleting a branch, fiddling with CI) trains them to dismiss prompts. The user asked for a way to say *"record what I did, but keep it anonymous."*
+**Context**: LaLog tracks continuously and asks for descriptions, but not every stretch of work deserves a label — yet the periodic describe/progress prompts treat every session alike. Nagging a user about cleanup sessions (deleting a branch, fiddling with CI) trains them to dismiss prompts. The user asked for a way to say *"record what I did, but keep it anonymous."*
 
 **Decision**:
-1. **`Session.anonymous` flag**: a session can be marked anonymous ("background work") — at the 3-choice start prompt (**Describe… / Keep as background work / Not now**), from the panel detail action, or from the status-bar quick action (`lalog.background`).
-2. **Anonymous sessions are never prompted**: the describe checkpoint (`checkProgress`) and the on-start description offer all skip them; the wrap prompt still applies but hides its "Add/update description" option.
-3. **Describing clears the flag**: any real description (start, checkpoint, edit, closing note) sets `anonymous = false`, so labeling and prompting resume normally. A manual `Describe now` on an anonymous session always works — the flag only suppresses *automatic* prompting.
-4. **One-shot start offer**: the on-start description fires once at the first natural breakpoint after `startDescAt` minutes (`offerStartDescription`), never re-nags; "Not now" just lets the session stay undescribed.
+1. **`Session.anonymous` flag**: a session can be marked anonymous ("background work") — from the describe checkpoint's **Keep as background work** option, the panel detail action, or the status-bar quick action (`lalog.background`).
+2. **Anonymous sessions are never prompted**: the describe checkpoint (`checkProgress`) skips them; the wrap prompt still applies but hides its "Add/update description" option.
+3. **Describing clears the flag**: any real description (checkpoint, progress note, or edit) sets `anonymous = false`, so labeling and prompting resume normally. A manual `Describe now` on an anonymous session always works — the flag only suppresses *automatic* prompting.
 
 **Rationale**:
 - The choice happens at decision time rather than being toggled silently, so the user never "loses" tracking — anonymous still records time, events, and files; it only stops the labeling prompts.
 - Clearing on describe keeps the flag an explicit, reversible statement, avoiding permanently-dimmed sessions the user forgot about.
 
-**Implementation**: `src/core/types.ts` (`anonymous`), `src/core/sessionManager.ts` (`offerStartDescription`, `applyBackgroundWork`, `cancelDescriptionOffer`, guards in `checkProgress`/`presentDescribe`/`offerPendingCloseNote`/`describeShutdownSession`/`recordCloseNote`), `src/prompts/promptCoordinator.ts` + `describeFlow.ts` (start prompt with `background` choice, wrap option hidden when anonymous), `src/ui/panelView.ts` (dimmed `○` state, "Keep as background work" row action), `src/extension.ts` (`lalog.background`).
+**Implementation**: `src/core/types.ts` (`anonymous`), `src/core/sessionManager.ts` (`applyBackgroundWork`, guards in `checkProgress`/`presentDescribe`), `src/prompts/promptCoordinator.ts` + `describeFlow.ts` (describe-checkpoint `background` choice, wrap option hidden when anonymous), `src/ui/panelView.ts` (dimmed `○` state, "Keep as background work" row action), `src/extension.ts` (`lalog.background`).
 
-**Test coverage**: manual (panels/prompts not host-testable); pure helpers covered by the opinionated start-prompt path — covered indirectly by `test/projects.test.ts`/`test/insights.test.ts` for reporting of anonymous sessions (`*(background work)*`).
+**Test coverage**: manual (panels/prompts not host-testable); pure helpers covered via `test/projects.test.ts`/`test/insights.test.ts` for reporting of anonymous sessions (`*(background work)*`).
 
 
 ## ADR-014: Projects as a Derived Workspace Registry
@@ -414,23 +418,23 @@ export function thresholdsMs(cfg: WorklogConfig): ThresholdsMs {
 
 **Test coverage**: `test/insights.test.ts` — effectiveMs tails/cap, per-range totals, per-project aggregation with explicit+derived mapping, vscode/outside split, 24-hour timeline, hourly breakdown, month boundaries.
 
-## ADR-016: Describe Before Exit via Focus-Loss Prompt
+## ADR-016: Describe Before Exit via Focus-Loss Prompt (removed)
 
-**Status**: Accepted
+**Status**: Superseded by ADR-020 — removed entirely.
 
 **Context**: The user reported being asked to describe "the previous session" on every VS Code launch, by which point context is cold — they wanted the question asked *before* exiting, like VS Code's unsaved-changes prompt. There is **no stable pre-shutdown extension API** (`workspace.onWillShutdown` is a proposed API only; `deactivate()` is synchronous and time-limited), so a blocking close dialog is impossible in a published extension.
 
-**Decision**:
+**Decision** (historical — the feature was removed in ADR-020):
 1. **Focus-loss trigger** `src/core/sessionManager.ts::onWindowFocusLost()`: subscribed to `window.onDidChangeWindowState` in `activate()`; when the window loses focus (~about to exit) and the live session is already due-for-description, `presentDescribe(null)` runs immediately while context is fresh.
 2. **Conservative guard** `src/core/focusPrompt.ts::shouldPromptOnFocusLost()`: only `describePending` sessions without a description (and not anonymous) trigger — a quick alt-tab never nags.
 3. **Per-session cooldown** (`focusPrompted`): the prompt fires at most once per describe-due window; reset on a fresh session and after `described`/`background`.
 4. **No startup fallback**: the launch-time `describeShutdownSession()` fallback (recovering descriptions of crash/force-quit sessions) was removed by ADR-017 — LaLog never asks about a closed session again.
 
-**Rationale**: The focus-loss event is the closest stable proxy for "about to quit"; it fires before process death, letting the user answer in-context. The conservative guard + cooldown keep it quiet. (The original rationale also relied on the startup fallback for lost descriptions; per ADR-017 the user explicitly prefers never being asked retroactively, so a missed focus-loss prompt is simply accepted.)
+**Rationale**: The focus-loss event is the closest stable proxy for "about to quit"; it fires before process death, letting the user answer in-context. The conservative guard + cooldown keep it quiet. (The original rationale also relied on the startup fallback for lost descriptions; per ADR-017 the user explicitly prefers never being asked retroactively, so a missed focus-loss prompt is simply accepted.) Later experience showed the prompt still fired at the wrong moments (alt-tab, closing the window) — see ADR-020.
 
-**Implementation**: `src/core/focusPrompt.ts` (pure guard), `src/core/sessionManager.ts` (trigger + cooldown), `src/extension.ts` (event subscription), `test/focusPrompt.test.ts`.
+**Implementation** (historical): `src/core/focusPrompt.ts` (pure guard), `src/core/sessionManager.ts` (trigger + cooldown), `src/extension.ts` (event subscription), `test/focusPrompt.test.ts`.
 
-**Test coverage**: `test/focusPrompt.test.ts` — guard matrix (describe-due, no session, cooldown, anonymous, existing description, non-due states).
+**Test coverage** (historical): `test/focusPrompt.test.ts` — guard matrix (describe-due, no session, cooldown, anonymous, existing description, non-due states).
 
 ## ADR-017: Never Prompt About a Closed Session
 
@@ -442,9 +446,9 @@ export function thresholdsMs(cfg: WorklogConfig): ThresholdsMs {
 1. **No prompts about past sessions** — the startup shutdown-description prompt, the recovery closing-note prompt, and the pending-closing-note prompt are all removed (`askShutdownDescription`, `askClosingNote` deleted).
 2. **Leftover snapshots always auto-close** — on launch, any active snapshot (only possible after an abnormal exit) is closed as `recovery-skip` with `endedAt = lastActivityAt`, **without prompting**, and a fresh session starts. The resume branch is removed along with `resumeWindowMinutes`/`recoverActiveMachine`.
 3. **Closure is the only boundary** — a reopened window always begins a new session; a session left undescribed stays flagged (`needsDescription`) for the sessions view but is never re-probed.
-4. **Explicit ends still ask** — `recordCloseNote` (`askSessionClose`) survives: the user is present at the moment they manually end/wrap a session, so a closing note there is not "about a closed session".
+4. **Explicit ends still ask** — `recordCloseNote` (`askSessionClose`) survives: the user is present at the moment they manually end/wrap a session, so a closing note there is not "about a closed session". *(Superseded by ADR-019 — even explicit ends no longer prompt.)*
 
-**Rationale**: Descriptions are best gathered while a session is still live (start prompt, checkpoint, progress notes, focus-loss). Once closed, context is gone and retroactive prompts were the exact complaint addressed here; any formatting gap is the user's accepted trade-off.
+**Rationale**: Descriptions are best gathered while a session is still live (checkpoint, progress notes). Once closed, context is gone and retroactive prompts were the exact complaint addressed here; any formatting gap is the user's accepted trade-off.
 
 **Implementation**: `src/core/sessionManager.ts` (`openWorkspace`, `finishRecovered`, removal of `describeShutdownSession`/`pendingClose`/resume branch), `src/prompts/promptCoordinator.ts` (removed `askShutdownDescription`, `askClosingNote`), `src/core/config.ts` (removed `resumeWindowMinutes`). ADR-016's "startup fallback" is superseded.
 
@@ -475,6 +479,57 @@ export function thresholdsMs(cfg: WorklogConfig): ThresholdsMs {
 **Implementation**: `src/capture/diffCapture.ts`, `src/capture/terminalCapture.ts`, `src/capture/aiLog.ts`, `src/capture/redactText.ts` (pure modules), `src/storage/technicalStore.ts` (sidecar storage), `src/core/sessionManager.ts` (wiring), `src/opencode/service.ts` (AI interaction logging), `src/extension.ts` (service-to-manager wiring).
 
 **Test coverage**: `test/diffCapture.test.ts` (first-save newFile, subsequent patches, binary skip, redaction, cap, reset, LRU), `test/terminalCapture.test.ts` (stripAnsi, confidence mapping, duration, stdout absent/capped/redacted, clearInFlight), `test/aiLog.test.ts` (shape, truncated passthrough), `test/redactText.test.ts` (compile, invalid skip, case-insensitive global), `test/technicalStore.test.ts` (append+read round-trip, rotation, malformed skip, delete, pathFor shape).
+
+## ADR-019: No Description Prompts on Close + Text-First Describe
+
+**Status**: Accepted
+
+**Context**: Two UX problems surfaced in practice. (1) The "closing note" prompt (`askSessionClose` via `recordCloseNote`) asked "what did you get done?" whenever a session was explicitly ended, restarted, wrapped, or answered "end" on the idle check — a prompt the user wanted gone entirely. (2) The describe flow was two-step but asked the **task type via QuickPick first**: a typed description landed in the QuickPick's *filter box* and pressing Enter either matched the wrong type (discarding the text) or returned `undefined` (recorded as "skipped"). With no buttons anywhere, the description never submitted and the user could only skip.
+
+**Decision**:
+1. **No description prompts when a session closes** — `askSessionClose`/`recordCloseNote`/`endSessionWithNote` are deleted. Explicit end, end-restart, the idle-check "end", and wrap-new all close silently. `anonymous` and description state are whatever they were at close — sessions are never probed after closing (extends ADR-017 to explicit ends; supersedes ADR-017 item 4).
+2. **Text-first describe flow** (`src/prompts/describeFlow.ts::runDescribeFlow`): the **InputBox comes first**, pre-filled with live session data (`buildPrefill`). **Enter saves the text immediately**; Esc only appears *after* text is confirmed, and an empty/Esc submission opens a small fallback QuickPick that keeps **Same as last**, **Draft with AI**, **Keep as background work**, and **Later** reachable without typing. After text is entered, a second QuickPick picks the task type with **"other" pre-selected** via the low-level `createQuickPick` (which supports `activeItems` — `showQuickPick` cannot) so Enter accepts the default instead of closing with `undefined`.
+3. **Same reorder for the on-start prompt** (`askSessionStart`): InputBox first, then a `Keep as background work` / `Not now` fallback when skipped. All previously reachable outcomes (`described`, `background`, `later`) were preserved. *(Subsequently removed entirely — see ADR-021.)*
+
+**Rationale**: A description typed into a filter box is lost by design — the only robust fix is to make the text box the first (and Enter-submittable) step. The low-level QuickPick is required only because the high-level `showQuickPick` has no `activeItems` option; without a pre-selected default, Enter on the type picker would close with `undefined` and silently drop the description all over again. Removing the close note keeps `endSession` side-effect free: it closes and reopens, nothing prompts.
+
+**Implementation**: `src/prompts/promptCoordinator.ts` (deleted `askSessionClose`; reordered `askSessionStart` — subsequently removed, ADR-021), `src/prompts/describeFlow.ts` (text-first `runDescribeFlow`, `quickPickWithDefault` helper), `src/core/sessionManager.ts` (deleted `recordCloseNote`/`endSessionWithNote`; `endAndRestart`, `checkIdle`, `applyWrapResult` now call `endSession` directly), `src/extension.ts` (`lalog.endSession` → `manager.endSession`).
+
+**Test coverage**: typecheck + full suite — the removed prompt paths had no pure-code unit tests, and the reorder keeps `DescribeResult`/`applyDescribeResult` shapes unchanged.
+
+## ADR-020: Remove the Describe-Before-Exit Prompt
+
+**Status**: Accepted
+
+**Context**: ADR-016 added a focus-loss "describe before exit" prompt as the closest proxy for closing VS Code. In practice it still fired at the wrong moments: any focus loss (alt-tab, opening another app, the palette stealing focus) while a session was `describePending` surfaced the description prompt. The user no longer wants a description prompt at the moment of closing at all.
+
+**Decision**:
+1. **Delete the focus-loss trigger** — `onWindowFocusLost()` is removed from `SessionManager`, and the `window.onDidChangeWindowState` subscription is removed from `extension.ts`. Losing window focus no longer prompts anything.
+2. **Delete the guard module** — `src/core/focusPrompt.ts` (`shouldPromptOnFocusLost`) and its test file are removed; the `focusPrompted` cooldown field and its resets are deleted.
+3. **No replacement** — as with ADR-017/ADR-019, closing never asks about a description. The describe checkpoint remains the primary automatic description entry point while a session is live (the on-start prompt was subsequently removed — see ADR-021); anything undescribed stays flagged in the sessions view.
+
+**Rationale**: A prompt that fires on alt-tab and window close alike is more annoying than helpful. The user prefers no prompt at closing; context for a description is best gathered while still working (checkpoint), never at the leave moment.
+
+**Implementation**: `src/extension.ts` (removed `onDidChangeWindowState` subscription), `src/core/sessionManager.ts` (removed `onWindowFocusLost`, `focusPrompted`, focus import), deleted `src/core/focusPrompt.ts` and `test/focusPrompt.test.ts`.
+
+**Test coverage**: typecheck + full suite — `focusPrompt.test.ts` removed with its module.
+
+## ADR-021: Remove the On-Start Description Prompt
+
+**Status**: Accepted
+
+**Context**: ADR-006/ADR-013 added an optional on-start description prompt (`askSessionStart`) that fired ~5 minutes (`startDescriptionAfterMinutes`) after a session started, asking "Session started · <workspace> — what are you working on?". Combined with the focus-loss prompt removed in ADR-020, the user no longer wants any description prompt at the moment of opening VS Code — context is cold and the prompt interrupts the first thing they actually want to do.
+
+**Decision**:
+1. **Delete the on-start prompt** — `askSessionStart()` and the `StartPromptResult` type are removed from `PromptCoordinator`. The `scheduleStartDescription` / `offerStartDescription` / `clearStartDescription` / `applyStartDescription` methods and the `startDescTimer` / `startDescEligibleAt` fields are removed from `SessionManager`.
+2. **Delete the config** — `lalog.askDescriptionOnStart` and `lalog.startDescriptionAfterMinutes` settings (and the `startDescAt` threshold) are removed.
+3. **No replacement** — the describe checkpoint (~90 min), progress notes (hourly), manual edit, and the "Keep as background work" quick action remain as description entry points. Sessions that go undescribed stay flagged (`needsDescription`) in the sessions view.
+
+**Rationale**: A prompt that fires minutes after opening VS Code interrupts the user before they've settled into work. The describe checkpoint at ~90 minutes provides context-rich description gathering without the interruption. The user prefers zero description prompts on open.
+
+**Implementation**: `src/core/config.ts` (removed fields + threshold), `src/prompts/promptCoordinator.ts` (removed `askSessionStart`, `StartPromptResult`), `src/core/sessionManager.ts` (removed constructor param, timer fields, four methods, all call sites), `src/extension.ts` (removed constructor arg), `package.json` (removed config contributions), `test/sessionStore.test.ts` + `test/stateMachine.test.ts` (removed `startDescAt` from threshold literals).
+
+**Test coverage**: typecheck + full suite — no runtime path change to pure modules; `startDescAt` removed from test threshold literals to satisfy the type.
 
 ---
 

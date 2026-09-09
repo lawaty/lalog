@@ -25,7 +25,7 @@ LaLog is built on five principles:
 
 1. **Passive capture, active description** — The extension captures events (edits, saves, terminal, file ops, debug, tasks) automatically. The human only provides descriptions at natural breakpoints.
 2. **Sessions are engagement threads** — Not day-bound. An overnight coding session from 22:00 to 02:00 is one session. The only boundary is ~2h idle.
-3. **Never trust interval timers; confirm idle** — Active time is computed from event gaps, not `setInterval`. If you step away for more than 15 minutes, that gap is not counted — unless you confirm "Are you still there?", in which case the idle stretch counts as active but *outside* VS Code (tagless spans classified at report time).
+3. **Never trust interval timers; confirm idle** — Active time is computed from event gaps, not `setInterval`. If you step away for more than 15 minutes, that gap is not counted — unless you confirm "Are you still there?", in which case the idle stretch counts as active but *outside* VS Code (tagless spans classified at report time). Saying "I was away" instead trims that idle stretch and resumes tracking.
 4. **Breakpoint-aligned prompting** — Prompts are held until a natural pause (terminal command ends, debug session terminates, return from idle). No interrupting flow.
 5. **Local-only, crash-safe** — JSONL append-only storage. Atomic snapshots for active sessions. Zero telemetry.
 
@@ -118,7 +118,7 @@ flowchart TB
 |--------|-------|----------------|
 | **core/** | `stateMachine.ts`, `sessionManager.ts`, `activityTracker.ts`, `breakpoints.ts`, `config.ts`, `spans.ts`, `projects.ts`, `types.ts` | Pure state machine, session orchestration (idle/progress/auto-end checks), VS Code event capture, breakpoint detection, configuration, active-span arithmetic, project resolution (derive-on-read + explicit override) |
 | **capture/** | `diffCapture.ts`, `terminalCapture.ts`, `aiLog.ts`, `redactText.ts` | Unified diff generation at file save, terminal shell execution capture (command + exit code + duration + optional stdout), AI interaction metadata (char counts only), redaction utilities |
-| **prompts/** | `promptCoordinator.ts`, `describeFlow.ts` | Prompt mutex (one at a time, min spacing), 2-step describe UI (type picker → input box), 3-choice start prompt (describe / background / later), on-start/progress/close note prompts, anonymous-sensitive option hiding |
+| **prompts/** | `promptCoordinator.ts`, `describeFlow.ts` | Prompt mutex (one at a time, min spacing), text-first 2-step describe UI (InputBox → task-type QuickPick), progress/idle prompts, anonymous-sensitive option hiding |
 | **storage/** | `sessionStore.ts`, `projectRegistry.ts`, `store.ts`, `technicalStore.ts` | Session CRUD, JSONL append, atomic snapshots, curated `projects.json` registry (atomic rewrite), per-session technical sidecar JSONL, filesystem primitives |
 | **reporting/** | `aggregate.ts`, `report.ts`, `insights.ts`, `ranges.ts`, `spans.ts` | Today's active/untracked time, session-centric markdown reports (project scope, custom range, hourly log), pure period aggregations + 24h timeline, range math, in/out-of-VS-Code split |
 | **integrations/** | `git.ts`, `legacyExport.ts` | Git branch/commit annotation, legacy `files_by_day.txt` export |
@@ -171,7 +171,7 @@ flowchart LR
    - Evaluates prompt state: if `describePending` or `wrapPending`, schedules prompt delivery
 4. **BreakpointDetector** signals natural breakpoints (terminal end, git commit, debug end, return-idle)
 5. **PromptCoordinator** enforces mutex (one prompt visible at a time) and minimum spacing
-6. **DescribeFlow / WrapPrompt** presents the UI (QuickPick → InputBox)
+6. **DescribeFlow / WrapPrompt** presents the UI (InputBox → QuickPick)
 7. **SessionStore** persists to JSONL (closed sessions) or atomic snapshot (active sessions)
 
 ---
@@ -237,7 +237,7 @@ m.lastActivityAt = now;
 
 This means:
 - If you type continuously with <15 min between events, every millisecond counts
-- If you step away for 20 minutes, that gap is **not** counted — unless you confirm "still working", which counts it as active but outside VS Code
+- If you step away for 20 minutes, that gap is **not** counted — unless you confirm "still working", which counts it as active but outside VS Code, or pick "I was away", which trims the time since the idle prompt and keeps tracking
 - If you step away for 3 hours, the session stays open but accrues 0 active minutes during that time
 - After 2h idle (`autoEndIdle`), the session auto-closes with `endedAt = lastActivityAt`
 
@@ -287,7 +287,7 @@ sequenceDiagram
             SM->>SM: schedulePrompt('describe')
             Note over SM: Wait for breakpoint<br/>or force after 30min
             SM->>PC: askDescribe(machine, session, breakpoint)
-            PC->>User: QuickPick (task type) → InputBox (description)
+            PC->>User: InputBox (description) → QuickPick (task type)
             User-->>PC: type + text
             SM->>FSM: state = active (or wrapPending if past wrapAt)
         else state == wrapPending
@@ -316,8 +316,6 @@ sequenceDiagram
         EXT->>EXT: annotateSessionWithGit(session, cwd)
     else Auto-close (2h idle)
         SM->>SM: Detect idle >= autoEndIdle
-        SM->>PC: askClosingNote(session)
-        PC->>User: "Unfinished session — closing note?"
         SM->>SS: close(session, 'auto-idle', lastActivityAt)
     end
 ```
@@ -348,20 +346,28 @@ sequenceDiagram
 
     PC->>PC: acquire() — check mutex + spacing
     PC->>DF: runDescribeFlow(session, sameAsLast?)
-    DF->>User: QuickPick: "What are you working on?"
-    Note over User: Options: feature, bugfix,<br/>research, refactor, review,<br/>docs, ops, other,<br/>(same as last), Later
-    User-->>DF: chosen type
+    DF->>User: InputBox: "What are you working on?"
+    Note over User: Pre-filled with:<br/>[branch] file1, file2, file3
+    User-->>DF: description text (Enter saves)
+
+    alt No text entered
+        DF->>User: QuickPick: "Describe — skip the text?"
+        Note over User: Options: (same as last),<br/>Draft with AI,<br/>Keep as background work, Later
+        User-->>DF: reuse draft / background / later
+    else Text entered
+        DF->>User: QuickPick: "Task type?"
+        Note over User: Options: feature, bugfix,<br/>research, refactor, review,<br/>docs, ops, other,<br/>Draft with AI, Later
+        Note over DF: "other" pre-selected — Enter accepts it
+        User-->>DF: type (or override)
+        DF-->>PC: { choice: 'described', type, text }
+    end
 
     alt "Later"
         DF-->>PC: { choice: 'later' }
+    else "background"
+        DF-->>PC: { choice: 'background' }
     else "Same as last"
         DF-->>PC: { choice: 'described', type: 'other', text: sameAsLast }
-    else Specific type
-        DF->>DF: buildPrefill(session) — top files + git branch
-        DF->>User: InputBox: "Describe (<type>)"
-        Note over User: Pre-filled with:<br/>[branch] file1, file2, file3
-        User-->>DF: description text
-        DF-->>PC: { choice: 'described', type, text }
     end
 
     PC-->>SM: DescribeResult

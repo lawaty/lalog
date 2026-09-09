@@ -30,7 +30,7 @@ AI assistance is **optional and off by default**: when enabled, LaLog uses the l
 3. Work normally — edits, saves, terminal commands are captured automatically
 4. After ~90 active minutes, a describe prompt appears at a natural breakpoint
 5. After ~3.5h, a wrap prompt offers to close the session or extend 30 min
-6. After 15 min idle, LaLog asks "Are you still there?" — confirm to keep tracking
+6. After 15 min idle, LaLog asks "Are you still there?" — confirm to keep tracking, or "I was away" to trim the idle time and keep going
 7. After ~2h idle or closing VS Code, the session auto-closes (endedAt = lastActivityAt)
 
 ## Optional AI Assistance
@@ -63,7 +63,7 @@ Every AI output is labeled as AI-generated; nothing is silently persisted as gro
 - **Sessions are NOT day-bound** — an overnight coding thread is a single session
 - **The only boundary is ~2h idle** — auto-close uses `lastActivityAt`, never wall-clock
 - **Active-only time** — session duration is the sum of active timestamps, never `close − start`; idle gaps (>15 min) are never counted
-- **Idle confirmation** — after 15 min of no activity, LaLog asks if you're still working (e.g. outside VS Code) before letting the tracker go quiet
+- **Idle confirmation** — after 15 min of no activity, LaLog asks if you're still working (e.g. outside VS Code) before letting the tracker go quiet; "I was away and came back" drops the idle time since the prompt and keeps the session going
 - **Breakpoint-aligned prompts** — prompts deliver when a terminal command ends, not on a fixed timer
 - **Local-first / AI-optional / egress-explicit** — all data in `~/.lalog/`; AI off by default; exactly-what-is-sent is defined above
 - **JSONL append-only** — crash-safe, human-readable, grep-friendly

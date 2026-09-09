@@ -63,20 +63,10 @@
           "default": 15,
           "description": "After this many idle minutes, ask 'Are you still there?' — lets you keep the session running (and count the time as outside-VS-Code work) or end it."
         },
-        "lalog.startDescriptionAfterMinutes": {
-          "type": "number",
-          "default": 5,
-          "description": "Offer the optional on-start description this many minutes into a session (instead of immediately), only if you haven't added one yet."
-        },
         "lalog.progressAfterMinutes": {
           "type": "number",
           "default": 60,
           "description": "Active minutes between periodic progress-update prompts, which add timestamped notes to the current session (e.g. hourly)."
-        },
-        "lalog.askDescriptionOnStart": {
-          "type": "boolean",
-          "default": true,
-          "description": "Ask for a short description when a session starts, recorded as the session description and a timestamped note."
         },
         "lalog.autoEndAfterIdleMinutes": {
           "type": "number",

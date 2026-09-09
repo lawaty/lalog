@@ -9,9 +9,7 @@ export interface LaLogConfig {
   maxGraceExtensions: number;
   idleGapMinutes: number;
   idleConfirmAfterMinutes: number;
-  startDescriptionAfterMinutes: number;
   progressAfterMinutes: number;
-  askDescriptionOnStart: boolean;
   autoEndAfterIdleMinutes: number;
   debugTimeScale: number;
   logTerminalCommands: boolean;
@@ -32,9 +30,7 @@ const DEFAULTS: LaLogConfig = {
   maxGraceExtensions: 3,
   idleGapMinutes: 15,
   idleConfirmAfterMinutes: 15,
-  startDescriptionAfterMinutes: 5,
   progressAfterMinutes: 60,
-  askDescriptionOnStart: true,
   autoEndAfterIdleMinutes: 120,
   debugTimeScale: 1,
   logTerminalCommands: true,
@@ -90,7 +86,6 @@ export function readConfig(): LaLogConfig {
 export interface ThresholdsMs {
   idleGap: number;
   idleConfirm: number;
-  startDescAt: number;
   describeAt: number;
   describeForce: number;
   wrapAt: number;
@@ -109,7 +104,6 @@ export function thresholdsMs(cfg: LaLogConfig): ThresholdsMs {
   return {
     idleGap: m(cfg.idleGapMinutes),
     idleConfirm: m(cfg.idleConfirmAfterMinutes),
-    startDescAt: m(cfg.startDescriptionAfterMinutes),
     describeAt: m(cfg.describeAfterMinutes),
     describeForce: m(cfg.describeAfterMinutes + 30),
     wrapAt: m(cfg.wrapAfterMinutes),

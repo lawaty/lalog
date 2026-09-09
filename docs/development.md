@@ -52,7 +52,7 @@ lalog/
 │   │   └── types.ts           # Shared types
 │   ├── prompts/
 │   │   ├── promptCoordinator.ts # Mutex + spacing
-│   │   └── describeFlow.ts    # 2-step describe UI
+│   │   └── describeFlow.ts    # Text-first describe UI
 │   ├── storage/
 │   │   ├── sessionStore.ts    # Session CRUD
 │   │   └── store.ts           # Filesystem primitives
@@ -132,12 +132,12 @@ npm test
 ```
 
 This:
-1. Runs `node esbuild.test.js` — bundles `test/stateMachine.test.ts` → `dist-test/stateMachine.test.js`
-2. Runs `node --test dist-test/stateMachine.test.js` — executes tests using Node's built-in test runner
+1. Runs `node esbuild.test.js` — bundles every `test/*.test.ts` → `dist-test/*.test.js`
+2. Runs `node --test "dist-test/*.test.js"` — executes tests using Node's built-in test runner
 
-**Test file**: `test/stateMachine.test.ts`
+**Test files** (`test/`): `stateMachine`, `spans`, `trim`, `sessionStore`, `projects`, `insights`, `diffCapture`, `terminalCapture`, `aiLog`, `redactText`, `technicalStore`, `opencode`.
 
-Tests cover:
+Tests cover (stateMachine highlights):
 - Overnight session spanning midnight (not day-bound)
 - Idle gap ends active accrual but keeps session bound
 - Describe prompt triggers after 90 active minutes

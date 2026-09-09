@@ -13,9 +13,8 @@ import { ActivityTracker } from '../core/activityTracker';
 import { BreakpointDetector, BreakpointKind } from '../core/breakpoints';
 import { PromptCoordinator } from '../prompts/promptCoordinator';
 import { DescribeResult } from '../prompts/describeFlow';
-import { updateActiveSpan } from '../core/spans';
+import { updateActiveSpan, trimToCutoff } from '../core/spans';
 import { LaLogPaths, workspaceKey } from '../storage/store';
-import { shouldPromptOnFocusLost } from './focusPrompt';
 import { DiffCapture } from '../capture/diffCapture';
 import { TerminalCapture } from '../capture/terminalCapture';
 import type { TechnicalEntry, TechnicalDiff, TechnicalTerminal, TechnicalAiInteraction } from '../core/types';
@@ -34,8 +33,6 @@ export class SessionManager implements vscode.Disposable {
   private graceTimer: NodeJS.Timeout | null = null;
   private disposables: vscode.Disposable[] = [];
   private onStateChanged: () => void = () => {};
-  /** Cooldown: once the focus-loss prompt fired for a session, don't re-fire. */
-  private focusPrompted = false;
   private diffCapture: DiffCapture;
   private terminalCapture: TerminalCapture;
   private technicalStore: TechnicalStore;
@@ -46,7 +43,6 @@ export class SessionManager implements vscode.Disposable {
     private store: SessionStore,
     private th: ThresholdsMs,
     private paths: LaLogPaths,
-    private askDescriptionOnStart = true,
     private cfg?: LaLogConfig,
     techStore?: TechnicalStore
   ) {
@@ -126,22 +122,7 @@ export class SessionManager implements vscode.Disposable {
     startSession(this.machine, now);
     this.lastProgressActiveMin = 0;
     this.firstActivityAfterOpen = true;
-    this.focusPrompted = false;
-    // On-start description is offered a few minutes in, not immediately, so it
-    // doesn't interrupt the first thing you actually want to do.
     this.paused = false;
-    if (this.askDescriptionOnStart) this.scheduleStartDescription(this.session);
-    this.scheduleSave();
-    this.onStateChanged();
-  }
-
-  /** Record the on-start description as both description and a timestamped note. */
-  private async applyStartDescription(text: string): Promise<void> {
-    if (!this.session) return;
-    this.session.description = text;
-    this.session.anonymous = false;
-    this.session.needsDescription = false;
-    this.session.notes.push({ at: Date.now(), text });
     this.scheduleSave();
     this.onStateChanged();
   }
@@ -168,60 +149,12 @@ export class SessionManager implements vscode.Disposable {
     void this.applyBackgroundWork();
   }
 
-  /**
-   * The window lost focus (user alt-tabbed away, minimized, or is closing VS
-   * Code). Since there is no stable pre-shutdown event, treat this as the
-   * best proxy for "about to leave": if a description is already due, offer
-   * it now while the context is fresh, rather than on the next launch.
-   * Cooldown prevents re-firing for the same describe-due window.
-   */
-  onWindowFocusLost(): void {
-    if (this.paused) return;
-    if (this.focusPrompted) return;
-    if (!shouldPromptOnFocusLost(this.session, this.machine.state, this.focusPrompted)) return;
-    this.focusPrompted = true;
-    void this.presentDescribe(null);
-  }
-
   /** Assign (or clear, with undefined) the live session's project. */
   assignProject(projectId: string | undefined): void {
     if (!this.session) return;
     this.session.projectId = projectId;
     this.scheduleSave();
     this.onStateChanged();
-  }
-
-  /**
-   * Offer the on-start description later rather than immediately: after
-   * startDescAt minutes (or at the first natural breakpoint after that), and
-   * only if the session still has no description and isn't background work.
-   * One-shot — skipping never nags, it just lets the session stay undescribed.
-   */
-  private scheduleStartDescription(s: Session): void {
-    this.clearStartDescription();
-    const id = s.id;
-    this.startDescEligibleAt = s.startedAt + this.th.startDescAt;
-    this.startDescTimer = setTimeout(() => {
-      this.startDescTimer = null;
-      void this.offerStartDescription(id);
-    }, this.th.startDescAt);
-    (this.startDescTimer as NodeJS.Timeout).unref?.();
-  }
-
-  private async offerStartDescription(id: string): Promise<void> {
-    this.startDescTimer = null;
-    if (!this.session || this.session.id !== id) return;
-    if (this.session.description || this.session.anonymous) return;
-    const result = await this.prompts.askSessionStart(this.session);
-    if (!result || result.choice === 'later') return;
-    if (!this.session || this.session.id !== id) return;
-    if (result.choice === 'background') await this.applyBackgroundWork();
-    else await this.applyStartDescription(result.text);
-  }
-
-  private clearStartDescription(): void {
-    if (this.startDescTimer) clearTimeout(this.startDescTimer);
-    this.startDescTimer = null;
   }
 
   /**
@@ -242,9 +175,6 @@ export class SessionManager implements vscode.Disposable {
     this.openSpanStart = null;
     this.lastProgressActiveMin = 0;
     this.firstActivityAfterOpen = true; // recovery branch resets lastActivityAt to this event
-    if (this.askDescriptionOnStart) {
-      this.scheduleStartDescription(this.session);
-    }
     this.scheduleSave();
     this.onStateChanged();
   }
@@ -258,14 +188,12 @@ export class SessionManager implements vscode.Disposable {
   private lastIdleArmAt = 0;
   /** Guard against stacking idle prompts. */
   private idlePromptOpen = false;
+  /** Epoch ms the idle prompt was shown (in-memory only; not persisted). */
+  private idleAskedAt: number | null = null;
   /** Active minutes at the last progress note — re-arm after progressAt more. */
   private lastProgressActiveMin = 0;
   /** Guard against stacking progress-update prompts. */
   private progressPromptOpen = false;
-  /** One-shot 'describe your session?' prompt fired startDescAt after session start. */
-  private startDescTimer: NodeJS.Timeout | null = null;
-  /** Earliest moment a breakpoint may deliver the on-start description. */
-  private startDescEligibleAt = 0;
   /** Explicit user pause: keep the session open but accrue/prompt/end nothing. */
   private paused = false;
 
@@ -383,7 +311,6 @@ export class SessionManager implements vscode.Disposable {
     this.syncSessionActive();
     this.paused = true;
     this.clearForceTimers();
-    this.clearStartDescription();
     this.scheduleSave();
     this.onStateChanged();
   }
@@ -409,14 +336,12 @@ export class SessionManager implements vscode.Disposable {
   /**
    * End the current session and immediately start a fresh tracked one — the Now
    * box "End". Work never stops being monitored: the new session opens right
-   * away (undescribed; the delayed start prompt handles that), with an optional
-   * closing note collected for the ended session.
+   * away (undescribed).
    */
   async endAndRestart(): Promise<Session | null> {
     const closed = this.session ? this.session : null;
     if (closed) await this.endSession('user');
     await this.startFresh();
-    if (closed) await this.recordCloseNote(closed);
     return closed;
   }
 
@@ -436,16 +361,55 @@ export class SessionManager implements vscode.Disposable {
     if (now - m.lastActivityAt < this.th.idleConfirm) return;
     if (now < this.lastIdleArmAt) return;
     this.idlePromptOpen = true;
+    this.idleAskedAt = Date.now();
     const session = this.session;
     void this.prompts.askStillWorking(session).then((choice) => {
       this.idlePromptOpen = false;
       this.lastIdleArmAt = Date.now() + this.th.idleConfirm;
       if (choice === 'end') {
-        void this.endSessionWithNote('user');
+        this.trimIdleAwayWindow();
+        void this.endSession('user');
+      } else if (choice === 'away') {
+        // "I was away and came back": drop the idle window since the prompt was
+        // asked and resume tracking from right now, without ending the session.
+        const now = Date.now();
+        this.trimIdleAwayWindow();
+        if (this.session) {
+          this.machine.lastActivityAt = now;
+          this.session.lastActivityAt = now;
+          this.openSpanStart = now;
+          this.scheduleSave();
+          this.onStateChanged();
+        }
       } else if (choice === 'active') {
+        this.idleAskedAt = null;
         this.accrueOutsideConfirmed(Date.now());
       }
     });
+  }
+
+  /**
+   * Retroactively cut accrued time back to the moment the idle prompt was asked
+   * (dropping the away window). Shared by the 'end' and 'I was away' responses.
+   */
+  private trimIdleAwayWindow(): void {
+    const askAt = this.idleAskedAt;
+    this.idleAskedAt = null;
+    if (askAt == null || !this.session) return;
+    const trimmed = trimToCutoff(
+      this.session.activeSpans,
+      this.openSpanStart,
+      this.machine.lastActivityAt ?? askAt,
+      this.machine.activeMinutes,
+      this.session.activityTs,
+      askAt,
+    );
+    this.session.activeSpans = trimmed.closedSpans;
+    this.session.activityTs = trimmed.activityTs;
+    this.session.activeMinutes = trimmed.activeMinutes;
+    this.machine.activeMinutes = trimmed.activeMinutes;
+    this.machine.lastActivityAt = askAt;
+    this.openSpanStart = null;
   }
 
   /** A confirmed 'still working' idle period becomes an (outside) active span. */
@@ -466,21 +430,6 @@ export class SessionManager implements vscode.Disposable {
   }
 
   private onBreakpoint(kind: BreakpointKind): void {
-    // Deliver the on-start description at the first natural breakpoint after
-    // startDescAt (ADR-006 alignment) instead of interrupting mid-flow.
-    if (
-      kind !== 'force' &&
-      this.startDescTimer !== null &&
-      this.session &&
-      !this.session.description &&
-      !this.session.anonymous
-    ) {
-      if (Date.now() >= this.startDescEligibleAt) {
-        const id = this.session.id;
-        void this.offerStartDescription(id);
-        return;
-      }
-    }
     // A breakpoint arrives; if a prompt is pending, deliver now.
     const s = this.machine.state;
     if (s === 'describePending') {
@@ -550,7 +499,6 @@ export class SessionManager implements vscode.Disposable {
       this.machine.describedThisSession = true;
       this.machine.state = this.machine.activeMinutes >= this.th.wrapAt ? 'wrapPending' : 'active';
       if (this.machine.state === 'wrapPending') this.schedulePrompt('wrap');
-      this.focusPrompted = false;
     } else if (result.choice === 'background') {
       s.anonymous = true;
       s.needsDescription = false;
@@ -558,7 +506,6 @@ export class SessionManager implements vscode.Disposable {
       // entered from a wrap checkpoint ('add-description').
       this.machine.state = this.machine.activeMinutes >= this.th.wrapAt ? 'wrapPending' : 'active';
       if (this.machine.state === 'wrapPending') this.schedulePrompt('wrap');
-      this.focusPrompted = false;
     } else if (result.choice === 'later') {
       s.needsDescription = true;
       this.machine.state = 'active';
@@ -587,8 +534,7 @@ export class SessionManager implements vscode.Disposable {
   private async applyWrapResult(s: Session, result: { choice: string }): Promise<void> {
     const now = Date.now();
     if (result.choice === 'wrap-new') {
-      const closed = await this.endSession('user');
-      if (closed) await this.recordCloseNote(closed);
+      await this.endSession('user');
       await this.startFresh();
       return;
     }
@@ -656,7 +602,6 @@ export class SessionManager implements vscode.Disposable {
     s.activeMinutes = ended.activeMinutes;
     await this.store.close(s, reason, ended.endedAt);
     this.clearForceTimers();
-    this.clearStartDescription();
     this.diffCapture.reset();
     this.terminalCapture.clearInFlight();
     this.paused = false;
@@ -666,31 +611,6 @@ export class SessionManager implements vscode.Disposable {
     this.firstActivityAfterOpen = true;
     this.onStateChanged();
     return s;
-  }
-
-  /** End a user-initiated session and offer an optional closing note. */
-  async endSessionWithNote(reason: Exclude<ClosedReason, 'workspace-switch'>): Promise<Session | null> {
-    const closed = await this.endSession(reason);
-    if (closed) await this.recordCloseNote(closed);
-    return closed;
-  }
-
-  /** Optional closing description — prompt, then persist as description + note. */
-  async recordCloseNote(s: Session): Promise<void> {
-    const note = await this.prompts.askSessionClose(s);
-    if (!note) return;
-    s.notes.push({ at: Date.now(), text: note });
-    if (!s.description) {
-      s.description = note;
-      s.needsDescription = false;
-    }
-    s.anonymous = false; // describing clears background-work status
-    await this.store.updateSession(s.id, {
-      description: s.description,
-      needsDescription: s.needsDescription,
-      anonymous: s.anonymous ?? undefined,
-      notes: s.notes,
-    });
   }
 
   /** Suspend (workspace switch) — persist as active, don't close. */
@@ -705,7 +625,6 @@ export class SessionManager implements vscode.Disposable {
     const now = Date.now();
     const wsKey = workspaceKey(ws.key);
     this.paused = false;
-    this.clearStartDescription();
     this.diffCapture.reset();
     this.terminalCapture.clearInFlight();
     this.session = this.store.newSession(wsKey, ws.name, now);
@@ -713,8 +632,6 @@ export class SessionManager implements vscode.Disposable {
     startSession(this.machine, now);
     this.lastProgressActiveMin = 0;
     this.firstActivityAfterOpen = true;
-    this.focusPrompted = false;
-    if (this.askDescriptionOnStart) this.scheduleStartDescription(this.session);
     this.scheduleSave();
     this.onStateChanged();
   }
@@ -836,7 +753,6 @@ export class SessionManager implements vscode.Disposable {
   dispose(): void {
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     this.clearForceTimers();
-    this.clearStartDescription();
     this.activity.dispose();
     this.breakpoints.dispose();
     this.disposables.forEach((d) => d.dispose());
@@ -848,14 +764,13 @@ export class SessionManager implements vscode.Disposable {
    * Called from deactivate() on VS Code shutdown. Ends any active session with
    * reason 'vscode-shutdown' so it is recorded and not left as a dangling
    * recoverable snapshot. deactivate() is synchronous/time-limited, so we cannot
-   * reliably prompt here; the optional description is collected on next launch.
+   * reliably prompt here.
    */
   async shutdown(): Promise<void> {
     if (this.session) {
       await this.endSession('vscode-shutdown');
     }
     this.clearForceTimers();
-    this.clearStartDescription();
     this.activity.dispose();
     this.breakpoints.dispose();
     this.disposables.forEach((d) => d.dispose());

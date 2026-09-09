@@ -13,12 +13,6 @@ export type WrapResult =
   | { choice: 'add-description' }
   | { choice: 'skipped' };
 
-export type StartPromptResult =
-  | { choice: 'described'; text: string }
-  | { choice: 'background' }
-  | { choice: 'later' }
-  | null;
-
 export class PromptCoordinator {
   private visible = false;
   private lastShownAt = 0;
@@ -90,36 +84,6 @@ export class PromptCoordinator {
     }
   }
 
-  /** Optional description recorded when a session starts. `prefill` may seed continuity from a previous session. */
-  async askSessionStart(session: Session, prefill?: string): Promise<StartPromptResult> {
-    if (!(await this.acquire())) return null;
-    try {
-      const pick = await vscode.window.showQuickPick(
-        [
-          { label: '$(pencil) Describe…', description: 'pick a type and write a short description', choice: 'describe' },
-          { label: '$(mute) Keep as background work', description: 'no description — LaLog stops asking about this session', choice: 'background' },
-          { label: '$(clock) Not now', description: 'the checkpoint prompt will ask later', choice: 'later' },
-        ],
-        { title: `Session started · ${session.workspaceName}`, placeHolder: 'What are you working on?', ignoreFocusOut: true }
-      );
-      if (!pick) return { choice: 'later' };
-      if (pick.choice === 'background') return { choice: 'background' };
-      if (pick.choice === 'later') return { choice: 'later' };
-      const text = await vscode.window.showInputBox({
-        title: `Session started · ${session.workspaceName} — what are you working on?`,
-        value: prefill ?? buildPrefill(session),
-        placeHolder: 'e.g. "wire up the payment parsing bug"',
-        prompt: 'Optional · Esc to skip — add later from the sessions view.',
-        ignoreFocusOut: true,
-      });
-      if (text === undefined) return { choice: 'later' };
-      const trimmed = text.trim();
-      return trimmed ? { choice: 'described', text: trimmed } : { choice: 'later' };
-    } finally {
-      this.release();
-    }
-  }
-
   /** Periodic progress check — records a timestamped note every progressAt active minutes. */
   async askProgressUpdate(session: Session): Promise<string | null> {
     if (!(await this.acquire())) return null;
@@ -137,25 +101,8 @@ export class PromptCoordinator {
     }
   }
 
-  /** Optional closing note recorded when an explicitly-ended session wraps up. */
-  async askSessionClose(session: Session): Promise<string | null> {
-    if (!(await this.acquire())) return null;
-    try {
-      const text = await vscode.window.showInputBox({
-        title: `Session wrapped · ${session.workspaceName} — what did you get done?`,
-        value: session.description ?? '',
-        placeHolder: 'e.g. "payment bug fixed, all tests green"',
-        prompt: 'Optional · Esc to skip — add later from the sessions view.',
-        ignoreFocusOut: true,
-      });
-      return text === undefined ? null : text.trim() ? text.trim() : null;
-    } finally {
-      this.release();
-    }
-  }
-
   /** 'Are you still there?' — fired by the heartbeat when a session goes idle. */
-  async askStillWorking(session: Session): Promise<'active' | 'end' | null> {
+  async askStillWorking(session: Session): Promise<'active' | 'away' | 'end' | null> {
     if (!(await this.acquire())) return null;
     try {
       const activeH = fmtDuration(session.activeMinutes);
@@ -164,16 +111,23 @@ export class PromptCoordinator {
           {
             label: '$(check) Yes, still working',
             description: 'keep tracking — this idle time counts as outside-VS-Code work',
+            choice: 'active' as const,
+          },
+          {
+            label: '$(history) I was away and came back',
+            description: 'trim the idle time since this prompt and keep tracking',
+            choice: 'away' as const,
           },
           {
             label: '$(stop) No, end this session',
             description: `close session (${activeH} active)`,
+            choice: 'end' as const,
           },
         ],
         { title: `Are you still there? · ${session.workspaceName}`, placeHolder: 'Idle for a while — still working?', ignoreFocusOut: true }
       );
       if (!pick) return null;
-      return pick.label.includes('Yes') ? 'active' : 'end';
+      return pick.choice;
     } finally {
       this.release();
     }

@@ -36,31 +36,17 @@ A **session** represents a continuous engagement thread with a workspace. Sessio
 
 1. **Activation** — extension activates on `onStartupFinished` or `onDidChangeWorkspaceFolders`
 2. **Recovery** — if an active session snapshot exists for the workspace (a leftover from an abnormal exit), it is auto-closed as `recovery-skip` (endedAt = lastActivityAt) **without prompting**; a fresh session starts
-3. **New session** — tracking **auto-starts** (never untracked). An optional on-start description prompt records what you're working on (`lalog.askDescriptionOnStart`). Closed/past sessions are never asked about
+3. **New session** — tracking **auto-starts** (never untracked). Closed/past sessions are never asked about
 4. **Active tracking** — events accrue active time gap-based; each contiguous run is a span; confirmed-idle time extends a span classified as *outside VS Code*
 5. **Describe prompt** — after ~90 active minutes, prompt at natural breakpoint
 6. **Wrap prompt** — after ~3.5h active minutes, prompt to wrap or extend
-7. **Idle check** — after `idleConfirmAfterMinutes` (15) of no activity, "Are you still there?"; confirming keeps the span open (counted outside VS Code), ending or ignoring stops/skips
+7. **Idle check** — after `idleConfirmAfterMinutes` (15) of no activity, "Are you still there?"; "Yes" keeps the span open (counted outside VS Code), "I was away and came back" trims the idle time since the prompt and keeps tracking, ending or ignoring stops/skips
 8. **End** — user ends manually, VS Code closes (`vscode-shutdown`), or auto-close after 2h idle
 9. **Auto-restart** — any event that arrives with no open session (after a manual end or auto-idle close) silently starts a fresh session, so work is tracked even if every description/update prompt was skipped
 
 ### Auto-Start on Open
 
-Opening a workspace with no active session starts tracking immediately — there is no "untracked" state. One optional pre-session dialog may appear:
-
-1. **On-start description** (`lalog.askDescriptionOnStart`, default on) — a short "what are you working on?" prompt offered **a few minutes in** (`lalog.startDescriptionAfterMinutes`, default 5) rather than immediately, so it never interrupts the first thing you do. It fires once and only if no description has been added yet:
-
-```
-┌─────────────────────────────────────────┐
-│  Session started · "my-project"         │
-│  — what are you working on?             │
-│                                         │
-│  [type what you're doing]               │
-│  Optional · Esc to skip                 │
-└─────────────────────────────────────────┘
-```
-
-If it's skipped, the session keeps tracking anyway and can be described later (describe checkpoint, progress note, or the sessions view). Nothing is ever left untracked — all work is recorded.
+Opening a workspace with no active session starts tracking immediately — there is no "untracked" state. Sessions can be described later via the describe checkpoint (~90 min), progress notes, or the sessions view. Nothing is ever left untracked — all work is recorded.
 
 ### Auto-Assignment to Explicit Session
 
@@ -156,20 +142,25 @@ The `PromptCoordinator` enforces:
 
 Triggered when `activeMinutes >= describeAt` (default 90 min). Delivered at a natural breakpoint or forced after 30 minutes.
 
-**Two-step flow:**
+**Text-first flow** (a typed description is always submitted — never dropped in a filter box):
 
-1. **QuickPick** — "What are you working on?"
-   - Options: `feature`, `bugfix`, `research`, `refactor`, `review`, `docs`, `ops`, `other`
-   - If a previous session exists: "Same as last: \<description\>" option
-   - "Later" option — skip for now, flagged as `needsDescription`
-
-2. **InputBox** — "Describe (\<type\>)"
+1. **InputBox** — "What are you working on?"
    - Pre-filled with deterministic data from the live session:
      - Git branch: `[main]`
      - Top 3 edited files: `file1.ts, file2.ts, file3.ts`
      - Terminal work: `(terminal work)` if no file edits
-   - User can edit the pre-fill or write from scratch
-   - Esc = skip (flagged `needsDescription`)
+   - **Enter saves immediately.** Esc or an empty value opens step 2 (no text was entered)
+
+2. **QuickPick (type)** — shown after text was entered, "other" pre-selected
+   - Options: `feature`, `bugfix`, `research`, `refactor`, `review`, `docs`, `ops`, `other`
+   - `Enter` accepts the pre-selected type and saves; arrow-select any other type
+   - Also offers "Draft with AI" (when enabled) and "Keep as background work"
+
+   With **no text entered**, a smaller QuickPick keeps the non-text paths reachable:
+   - "Same as last: \<description\>" (previous session) — reuse description
+   - "Draft with AI" — opencode writes a draft you can edit
+   - "Keep as background work" — anonymous session, stops asking
+   - "Later" — skip for now, flagged as `needsDescription`
 
 **Result handling:**
 - `described` → session gets `type` and `description`, state → `active` (or `wrapPending` if past wrapAt)
@@ -194,23 +185,6 @@ Options:
 - Grace period: 30 minutes, then re-prompt with wrap
 - Hard split at 5h (`hardSplit`) — coordinator handles auto-split
 
-### Closing Note (Auto-Close Recovery)
-
-When a session auto-closes (idle ≥ 2h) without a description:
-
-```
-┌─────────────────────────────────────────┐
-│  Unfinished session "my-project"        │
-│  (2h 15m active)                        │
-│                                         │
-│  closing note (what got done)?          │
-│  ┌───────────────────────────────────┐  │
-│  │ [pre-filled with description]     │  │
-│  └───────────────────────────────────┘  │
-│  Enter to save · Esc to skip            │
-└─────────────────────────────────────────┘
-```
-
 ### Breakpoint-Aligned Delivery
 
 Prompts are **not** delivered on fixed timers. They are held until a natural breakpoint:
@@ -231,12 +205,8 @@ Every description and progress update is recorded as a timestamped **note** in `
 
 | Prompt | When | Recorded as |
 |--------|------|-------------|
-| **On-start description** | `startDescriptionAfterMinutes` (5) into the session, once, if none added yet | Description + note |
 | **Progress update** | Every `progressAfterMinutes` (default 60) of *active* minutes, while in `active`/`grace` state | Note (becomes the description if none exists) |
 | **Describe checkpoint** | After ~90 active minutes | Description + note |
-| **Wrap close note** | Choosing "Wrap session & start a new one" | Note on the closed session |
-| **Auto-idle return note** | Resuming after an auto-close left a session undescribed | Note on the ended session |
-| **End-command close note** | `lalog.endSession` / "No, end this session" on the idle check | Note on the closed session (becomes the description if none exists) |
 | **Manual edit** | `lalog.editSession` (session row click) | Note only when the description changes |
 
 Each note stores `{ at: <epoch ms>, text }`. Skipping a progress prompt (Esc) re-arms the timer for another full window instead of nagging. The full timeline is visible in the sessions view.
@@ -339,9 +309,9 @@ One webview panel in the activity bar (LaLog icon) with three tabs — **Session
 
 If you didn't want to describe a session, you can leave it **anonymous** ("background work") instead:
 
-- Chosen right at session start (the 3-choice start prompt: **Describe…** / **Keep as background work** / **Not now**), later from the panel detail action, or from the status-bar quick action (`Keep as background work`)
-- Anonymous sessions show a dimmed `○` and `— background`; they are **never** prompted — the describe checkpoint, progress notes, and the on-start description offer all skip them
-- Any real description (edit, describe, or closing note) clears the anonymous flag and normal prompting resumes
+- Chosen from the describe checkpoint (**Keep as background work**), the panel detail action, or the status-bar quick action (`Keep as background work`)
+- Anonymous sessions show a dimmed `○` and `— background`; they are **never** prompted — the describe checkpoint and progress notes skip them
+- Any real description (edit, describe checkpoint, or progress note) clears the anonymous flag and normal prompting resumes
 - The wrap prompt still applies to anonymous sessions; only its "Add/update description" option is hidden
 - Reports render them as `*(background work)*` and insights count their time
 
@@ -378,7 +348,7 @@ The **Now** card is a non-scrolling footer at the bottom of the same panel, styl
 - **Session clock** — the big `h:mm:ss` count-up of this session's tracked duration (active minutes plus the live gap since the last event, capped at the idle gap so it doesn't creep while you're away); it freezes while paused
 - **World clock** — a small live wall time next to the session clock, and today's tracked total
 - **Status pill** — green **tracking** dot, or amber **paused**
-- **Buttons** — **Pause** / **Resume** (outlined warning style) swap the tracking clock on and off (the session itself stays open, untouched); **End** (outlined danger style) closes the session, records an optional closing note, and immediately starts a fresh tracked session so nothing is ever left untracked
+- **Buttons** — **Pause** / **Resume** (outlined warning style) swap the tracking clock on and off (the session itself stays open, untouched); **End** (outlined danger style) closes the session and immediately starts a fresh tracked session so nothing is ever left untracked
 
 ### Quick Actions Menu
 
@@ -512,9 +482,7 @@ All settings are under `lalog.*` in VS Code settings (`settings.json`).
 | `lalog.maxGraceExtensions` | number | `3` | Max free "Extend" choices before description required |
 | `lalog.idleGapMinutes` | number | `15` | Gap between events that still counts as active |
 | `lalog.idleConfirmAfterMinutes` | number | `15` | Idle before the "Are you still there?" check fires (confirmed idle counts as active outside VS Code) |
-| `lalog.startDescriptionAfterMinutes` | number | `5` | Delay before offering the optional on-start description (once, only if none added yet) |
 | `lalog.progressAfterMinutes` | number | `60` | Active minutes between periodic progress-update prompts (timestamped notes) |
-| `lalog.askDescriptionOnStart` | boolean | `true` | Ask for a short description when a session starts |
 | `lalog.autoEndAfterIdleMinutes` | number | `120` | Idle time before auto-close (2h). Sessions are not day-bound; this is the only boundary |
 | `lalog.debugTimeScale` | number | `1` | Divide all time thresholds by this factor. Set 60 to test a "4-hour" session in 4 minutes |
 | `lalog.logTerminalCommands` | boolean | `true` | Record terminal commands (requires shell integration) |
@@ -534,7 +502,6 @@ All time settings are resolved to milliseconds with `debugTimeScale` applied:
 thresholdsMs(cfg) → {
   idleGap: 15 * 60 * 1000 / scale,
   idleConfirm: 15 * 60 * 1000 / scale,
-  startDescAt: 5 * 60 * 1000 / scale,      // on-start description, 5 min in
   describeAt: 90 * 60 * 1000 / scale,
   describeForce: 120 * 60 * 1000 / scale,  // describeAt + 30min
   wrapAt: 210 * 60 * 1000 / scale,
