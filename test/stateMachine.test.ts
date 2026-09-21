@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { newMachine, onActivity, startSession, autoClose } from '../src/core/stateMachine';
+import { newMachine, onActivity, startSession, autoClose, isStale } from '../src/core/stateMachine';
 import type { ThresholdsMs } from '../src/core/config';
 
 // Real thresholds scaled to be testable quickly without debugTimeScale.
@@ -15,6 +15,7 @@ const th: ThresholdsMs = {
   grace: 30 * MIN,
   hardSplit: 300 * MIN,
   autoEndIdle: 120 * MIN,
+  staleAfter: 60 * MIN,
   maxGraceExtensions: 3,
   progressAt: 60 * MIN,
 };
@@ -89,4 +90,23 @@ test('autoClose uses lastActivityAt not detection time', () => {
   onActivity(m, t0 + 10 * MIN, th);
   const closed = autoClose(m, t0 + 3 * 60 * MIN);
   assert.equal(closed.endedAt, t0 + 10 * MIN);
+});
+
+test('isStale: null lastActivityAt is never stale', () => {
+  assert.equal(isStale(null, 1000, 60 * MIN), false);
+});
+
+test('isStale: exactly at the cutoff is stale', () => {
+  const now = 1000;
+  assert.equal(isStale(now - 60 * MIN, now, 60 * MIN), true);
+});
+
+test('isStale: just under the cutoff is not stale', () => {
+  const now = 1000;
+  assert.equal(isStale(now - 60 * MIN + 1, now, 60 * MIN), false);
+});
+
+test('isStale: past the cutoff is stale', () => {
+  const now = 1000;
+  assert.equal(isStale(now - 60 * MIN - 1, now, 60 * MIN), true);
 });

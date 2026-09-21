@@ -24,7 +24,7 @@
 LaLog is built on five principles:
 
 1. **Passive capture, active description** — The extension captures events (edits, saves, terminal, file ops, debug, tasks) automatically. The human only provides descriptions at natural breakpoints.
-2. **Sessions are engagement threads** — Not day-bound. An overnight coding session from 22:00 to 02:00 is one session. The only boundary is ~2h idle.
+2. **Sessions are engagement threads** — Not day-bound. An overnight coding session from 22:00 to 02:00 is one session. The only boundary is idle: a session is force-closed after `staleSessionAfterMinutes` (default 60) of no activity and a fresh session starts (the 2h auto-close safety net is capped at that cutoff).
 3. **Never trust interval timers; confirm idle** — Active time is computed from event gaps, not `setInterval`. If you step away for more than 15 minutes, that gap is not counted — unless you confirm "Are you still there?", in which case the idle stretch counts as active but *outside* VS Code (tagless spans classified at report time). Saying "I was away" instead trims that idle stretch and resumes tracking.
 4. **Breakpoint-aligned prompting** — Prompts are held until a natural pause (terminal command ends, debug session terminates, return from idle). No interrupting flow.
 5. **Local-only, crash-safe** — JSONL append-only storage. Atomic snapshots for active sessions. Zero telemetry.
@@ -239,7 +239,7 @@ This means:
 - If you type continuously with <15 min between events, every millisecond counts
 - If you step away for 20 minutes, that gap is **not** counted — unless you confirm "still working", which counts it as active but outside VS Code, or pick "I was away", which trims the time since the idle prompt and keeps tracking
 - If you step away for 3 hours, the session stays open but accrues 0 active minutes during that time
-- After 2h idle (`autoEndIdle`), the session auto-closes with `endedAt = lastActivityAt`
+- After `staleAfter` idle (default 60 min, `lalog.staleSessionAfterMinutes`), the session is force-closed as `auto-idle` with `endedAt = lastActivityAt` and a fresh session starts; the 2h `autoEndIdle` safety net is clamped to at most `staleAfter`
 
 ---
 
@@ -314,8 +314,8 @@ sequenceDiagram
         SS->>SS: appendLine(sessions.jsonl, session)
         SS->>SS: removeActive(wsKey)
         EXT->>EXT: annotateSessionWithGit(session, cwd)
-    else Auto-close (2h idle)
-        SM->>SM: Detect idle >= autoEndIdle
+    else Auto-close (stale cutoff)
+        SM->>SM: Detect idle >= staleAfter → close + start fresh
         SM->>SS: close(session, 'auto-idle', lastActivityAt)
     end
 ```

@@ -7,6 +7,7 @@ import {
   startSession,
   autoClose,
   onActivity,
+  isStale,
 } from '../core/stateMachine';
 import { SessionStore } from '../storage/sessionStore';
 import { ActivityTracker } from '../core/activityTracker';
@@ -196,10 +197,19 @@ export class SessionManager implements vscode.Disposable {
   private progressPromptOpen = false;
   /** Explicit user pause: keep the session open but accrue/prompt/end nothing. */
   private paused = false;
+  /** Guard against concurrent stale closes (heartbeat + activity events). */
+  private staleClosing = false;
 
   private onActivityEvent(ev: TrackedEvent, filePath?: string, now?: number): void {
     const ts = now ?? Date.now();
     if (this.paused) return; // explicitly paused: don't count, record, or reset timers
+    // Hard stale cutoff (ADR-022): the first event after >= staleAfter of
+    // inactivity closes the old session and starts fresh — no continue option.
+    // Re-dispatch the event so it lands in the fresh session, not the stale one.
+    if (this.session && isStale(this.machine.lastActivityAt, ts, this.th.staleAfter)) {
+      void this.checkStale(ts).then(() => this.onActivityEvent(ev, filePath, ts));
+      return;
+    }
     if (!this.session) this.ensureSessionOnActivity(ts);
     if (!this.session) return;
 
@@ -352,7 +362,7 @@ export class SessionManager implements vscode.Disposable {
    * filter-time classification tags it 'outside'.
    */
   private checkIdle(now: number): void {
-    if (!this.session || this.paused || this.idlePromptOpen) return;
+    if (!this.session || this.paused || this.idlePromptOpen || this.staleClosing) return;
     const m = this.machine;
     if (m.state !== 'active' && m.state !== 'describePending' && m.state !== 'wrapPending' && m.state !== 'grace') {
       return;
@@ -366,6 +376,7 @@ export class SessionManager implements vscode.Disposable {
     void this.prompts.askStillWorking(session).then((choice) => {
       this.idlePromptOpen = false;
       this.lastIdleArmAt = Date.now() + this.th.idleConfirm;
+      if (this.session !== session) return; // stale close replaced the session while the prompt was open
       if (choice === 'end') {
         this.trimIdleAwayWindow();
         void this.endSession('user');
@@ -700,6 +711,7 @@ export class SessionManager implements vscode.Disposable {
     void this.openWorkspace();
     this.heartbeatTimer = setInterval(() => {
       this.scheduleSave();
+      void this.checkStale(Date.now());
       this.checkIdle(Date.now());
       this.checkProgress(Date.now());
       this.checkAutoEnd(Date.now());
@@ -713,7 +725,7 @@ export class SessionManager implements vscode.Disposable {
    * 'grace' — never while a describe/wrap/other prompt owns the prompt slot.
    */
   private checkProgress(now: number): void {
-    if (!this.session || this.paused || this.progressPromptOpen) return;
+    if (!this.session || this.paused || this.progressPromptOpen || this.staleClosing) return;
     if (this.session.anonymous) return;
     const m = this.machine;
     if (m.state !== 'active' && m.state !== 'grace') return;
@@ -735,6 +747,25 @@ export class SessionManager implements vscode.Disposable {
   }
 
   /**
+   * Hard stale-session cutoff (ADR-022): after staleAfter of inactivity the
+   * session is force-closed as 'auto-idle' (endedAt = lastActivityAt) and a
+   * fresh session starts immediately. No continue/resume option is ever offered.
+   */
+  private async checkStale(now: number): Promise<void> {
+    if (!this.session || this.paused || this.staleClosing) return;
+    const m = this.machine;
+    if (!isStale(m.lastActivityAt, now, this.th.staleAfter)) return;
+    this.staleClosing = true;
+    try {
+      const closed = await this.endSession('auto-idle');
+      if (!closed) return;
+      await this.startFresh();
+    } finally {
+      this.staleClosing = false;
+    }
+  }
+
+  /**
    * Safety net for genuinely abandoned sessions (the only in-window boundary,
    * ADR-010). The idle-confirm prompt keeps lastActivityAt reset when the user
    * confirms they're still working, so this only fires for real absence: after
@@ -742,7 +773,7 @@ export class SessionManager implements vscode.Disposable {
    * lastActivityAt (active-only) so nothing idle is ever counted.
    */
   private checkAutoEnd(now: number): void {
-    if (!this.session || this.paused) return;
+    if (!this.session || this.paused || this.staleClosing) return;
     if (this.idlePromptOpen) return;
     const m = this.machine;
     if (m.lastActivityAt === null) return;

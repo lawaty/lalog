@@ -15,7 +15,7 @@ You open VS Code and just work. LaLog handles the rest:
 - **Descriptions at the right moments.** The describe checkpoint waits until the ~90-minute mark, and hourly progress notes fill in between. Every entry is a timestamped note on the session — and whether you answer or not, tracking keeps running. Sessions are never asked about on close.
 - **A real drill-down UI.** The sidebar holds three tabs — **Sessions**, **Insights**, **Projects**. Sessions group by day (most recent open by default); expand any session to see its description, active vs. outside-VS-Code split, per-kind event counters, top files, the note timeline, git branch/commits, and to assign it to a project or keep it as anonymous background work. Insights gives you at-a-glance bars for time by project/day, a 24-hour colored timeline, and top files — without opening a file.
 - **Anonymous when you say so.** At any time you can choose **Keep as background work** — from the describe checkpoint, the panel detail action, or the status-bar quick action: the session still tracks everything, but LaLog stops asking for a description. Project your many workspaces onto named, colored **projects** (claimed by folder, overridable per session), then filter, scope reports, and read insights by project.
-- **Stops on its own.** "Are you still there?" fires after 15 idle minutes so outside-editor work isn't lost — and abandoned sessions auto-close after ~2 hours instead of accumulating phantom time. Come back, type one key, and a fresh session picks up where it left off.
+- **Stops on its own.** "Are you still there?" fires after 15 idle minutes so outside-editor work isn't lost — and abandoned sessions are force-closed after 1 hour of inactivity (no continue option) and a fresh session starts automatically — come back, type one key, and a new session picks up where you left off.
 - **A clock you can act on.** The pinned **Current Session** box runs a live count-up of this session's tracked time (`h:mm:ss`) beside a small world clock, with nothing but pause, resume, and end — because the tracking is always on; ending a session immediately starts a fresh tracked one.
 - **Optional AI, off by default.** When enabled, a local `opencode` CLI drafts descriptions, writes report narratives, and reviews your work. It only ever sees the compact session summary (file paths, counters, branch, commit subjects) — never file contents or terminal output.
 - **Technical detail capture.** LaLog captures unified diffs at save time, terminal command metadata (with optional stdout capture), and AI interaction logs — all stored locally and subject to configurable redaction patterns and character limits.
@@ -84,7 +84,8 @@ Data is written to `~/.lalog/`:
 |---|---|---|
 | `lalog.idleGapMinutes` | `15` | Gap between events that still counts as continuous work |
 | `lalog.idleConfirmAfterMinutes` | `15` | When "Are you still there?" fires |
-| `lalog.autoEndAfterIdleMinutes` | `120` | Auto-close abandoned sessions |
+| `lalog.autoEndAfterIdleMinutes` | `120` | Auto-close abandoned sessions (capped at the stale-session cutoff) |
+| `lalog.staleSessionAfterMinutes` | `60` | Force-close a session idle this long; a new session starts automatically |
 | `lalog.progressAfterMinutes` | `60` | Cadence of progress-note prompts |
 | `lalog.describeAfterMinutes` | `90` | When the describe checkpoint fires |
 | `lalog.wrapAfterMinutes` | `210` | When the wrap-and-continue prompt fires |

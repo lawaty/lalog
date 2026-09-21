@@ -3,7 +3,7 @@
   "displayName": "LaLog",
   "description": "Local-first work session tracker with automatic event capture, human session descriptions, and optional opencode-powered AI assistance.",
   "icon": "resources/icon.png",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "publisher": "lawaty",
   "license": "MIT",
   "repository": {
@@ -71,12 +71,12 @@
         "lalog.autoEndAfterIdleMinutes": {
           "type": "number",
           "default": 120,
-          "description": "Idle time after which a session auto-closes (2h). Sessions are not day-bound; this is the only boundary."
+          "description": "Idle time after which a session auto-closes (2h). The stale-session cutoff (lalog.staleSessionAfterMinutes) takes effect first."
         },
-        "lalog.resumeWindowMinutes": {
+        "lalog.staleSessionAfterMinutes": {
           "type": "number",
-          "default": 30,
-          "description": "Recovery: if last activity was within this window on restart, offer resume."
+          "default": 60,
+          "description": "Idle minutes after which a session is force-closed and cannot be continued; a new session starts automatically."
         },
         "lalog.debugTimeScale": {
           "type": "number",

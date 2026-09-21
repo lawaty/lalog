@@ -11,6 +11,7 @@ export interface LaLogConfig {
   idleConfirmAfterMinutes: number;
   progressAfterMinutes: number;
   autoEndAfterIdleMinutes: number;
+  staleSessionAfterMinutes: number;
   debugTimeScale: number;
   logTerminalCommands: boolean;
   redactPatterns: string[];
@@ -32,6 +33,7 @@ const DEFAULTS: LaLogConfig = {
   idleConfirmAfterMinutes: 15,
   progressAfterMinutes: 60,
   autoEndAfterIdleMinutes: 120,
+  staleSessionAfterMinutes: 60,
   debugTimeScale: 1,
   logTerminalCommands: true,
   redactPatterns: ['TOKEN', 'KEY', 'SECRET', 'PASSWORD', 'PASS=', 'API_KEY', 'api[-_]?key'],
@@ -94,6 +96,8 @@ export interface ThresholdsMs {
   hardSplit: number;
   progressAt: number;
   autoEndIdle: number;
+  /** Hard cutoff: idle ms after which a session is force-closed and restarted (ADR-022). */
+  staleAfter: number;
   /** Not a duration — max free 'extend' choices before description is required. */
   maxGraceExtensions: number;
 }
@@ -101,6 +105,7 @@ export interface ThresholdsMs {
 export function thresholdsMs(cfg: LaLogConfig): ThresholdsMs {
   const scale = cfg.debugTimeScale || 1;
   const m = (min: number) => Math.round((min * 60 * 1000) / Math.max(1, scale));
+  const staleAfter = m(cfg.staleSessionAfterMinutes);
   return {
     idleGap: m(cfg.idleGapMinutes),
     idleConfirm: m(cfg.idleConfirmAfterMinutes),
@@ -111,7 +116,8 @@ export function thresholdsMs(cfg: LaLogConfig): ThresholdsMs {
     grace: m(cfg.graceMinutes),
     hardSplit: m(300),
     progressAt: m(cfg.progressAfterMinutes),
-    autoEndIdle: m(cfg.autoEndAfterIdleMinutes),
+    staleAfter,
+    autoEndIdle: Math.min(m(cfg.autoEndAfterIdleMinutes), staleAfter),
     maxGraceExtensions: Math.max(1, cfg.maxGraceExtensions),
   };
 }

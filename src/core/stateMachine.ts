@@ -80,3 +80,9 @@ export function autoClose(m: Machine, now: number): { activeMinutes: number; end
   const endedAt = m.lastActivityAt ?? now;
   return { activeMinutes: m.activeMinutes, endedAt };
 }
+
+/** True when the session has been inactive for at least staleAfter ms (ADR-022). */
+export function isStale(lastActivityAt: number | null, now: number, staleAfter: number): boolean {
+  if (lastActivityAt === null) return false;
+  return now - lastActivityAt >= staleAfter;
+}

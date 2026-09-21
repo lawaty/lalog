@@ -29,6 +29,7 @@
 - [ADR-019: No Description Prompts on Close + Text-First Describe](#adr-019-no-description-prompts-on-close--text-first-describe)
 - [ADR-020: Remove the Describe-Before-Exit Prompt](#adr-020-remove-the-describe-before-exit-prompt)
 - [ADR-021: Remove the On-Start Description Prompt](#adr-021-remove-the-on-start-description-prompt)
+- [ADR-022: Hard 1h Stale-Session Cutoff — No Continuation](#adr-022-hard-1h-stale-session-cutoff--no-continuation)
 
 ---
 
@@ -530,6 +531,30 @@ export function thresholdsMs(cfg: WorklogConfig): ThresholdsMs {
 **Implementation**: `src/core/config.ts` (removed fields + threshold), `src/prompts/promptCoordinator.ts` (removed `askSessionStart`, `StartPromptResult`), `src/core/sessionManager.ts` (removed constructor param, timer fields, four methods, all call sites), `src/extension.ts` (removed constructor arg), `package.json` (removed config contributions), `test/sessionStore.test.ts` + `test/stateMachine.test.ts` (removed `startDescAt` from threshold literals).
 
 **Test coverage**: typecheck + full suite — no runtime path change to pure modules; `startDescAt` removed from test threshold literals to satisfy the type.
+
+---
+
+## ADR-022: Hard 1h Stale-Session Cutoff — No Continuation
+
+**Status**: Accepted
+
+**Context**: The user wants a hard inactivity boundary: *"If a session was inactive for more than 1h, then automatically close it when I come back and don't allow continuing. Only end and start new is there."* The existing idle model (ADR-010, ADR-012) keeps a session alive as long as the user confirms "Are you still there?" — including the "I was away and came back" continue path — so a session could stay open across arbitrarily long absences. That conflicts with a hard 1h cutoff.
+
+**Decision**:
+1. **New setting `lalog.staleSessionAfterMinutes` (default 60)** — after this many idle minutes a session is force-closed as `auto-idle` with `endedAt = lastActivityAt` (ADR-007) and a fresh tracked session starts immediately, silently. No continue/resume/"I was away" option is ever offered for a stale session.
+2. **Trigger points** — the stale check runs (a) first in the heartbeat (before `checkIdle`/`checkAutoEnd`) and (b) at the top of `onActivityEvent`, so the first event after a >1h gap closes the old session and starts fresh ("when I come back"). The event is re-dispatched so it lands in the fresh session.
+3. **`autoEndIdle` is clamped to at most `staleAfter`** in `thresholdsMs()` — the stale cutoff always takes effect first; the 2h safety net can never fire after it.
+4. **No re-open/resume** — a stale session is closed permanently; the fresh session is the only path forward.
+
+**Rationale**:
+- A hard cutoff matches the user's mental model: after an hour away, the old session is over; the only way forward is a new session.
+- Closing with `auto-idle` and `endedAt = lastActivityAt` keeps reporting accurate (ADR-007) — no idle time is ever counted.
+- Starting the fresh session immediately keeps the "never untracked" guarantee.
+- Clamping `autoEndIdle` makes the invariant explicit and testable: the stale cutoff is the effective boundary.
+
+**Implementation**: `src/core/config.ts` (`staleSessionAfterMinutes`, `staleAfter`, clamped `autoEndIdle`), `src/core/stateMachine.ts` (`isStale` pure predicate), `src/core/sessionManager.ts` (`checkStale`, heartbeat + `onActivityEvent` triggers, `checkIdle` guard), `package.json` (setting contribution, removed stale `lalog.resumeWindowMinutes`).
+
+**Test coverage**: `test/stateMachine.test.ts` — `isStale` boundary tests (null, exactly-at, just-under, past cutoff); `staleAfter` added to threshold literals in `test/stateMachine.test.ts` and `test/sessionStore.test.ts`.
 
 ---
 

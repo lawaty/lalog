@@ -19,6 +19,7 @@ const th: ThresholdsMs = {
   grace: 30 * MIN,
   hardSplit: 300 * MIN,
   autoEndIdle: 120 * MIN,
+  staleAfter: 60 * MIN,
   maxGraceExtensions: 3,
   progressAt: 60 * MIN,
 };

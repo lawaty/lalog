@@ -197,7 +197,8 @@ Test the full session lifecycle in minutes instead of hours:
 | Describe after | 90 min | 90 sec |
 | Wrap after | 210 min (3.5h) | 210 sec (3.5 min) |
 | Grace period | 30 min | 30 sec |
-| Auto-close idle | 120 min (2h) | 120 sec (2 min) |
+| Stale cutoff | 60 min (1h) | 60 sec (1 min) |
+| Auto-close idle | 120 min (2h, capped at stale cutoff) | 60 sec (1 min, capped) |
 | Idle gap | 5 min | 5 sec |
 
 **Example workflow** (scale=60):
@@ -206,7 +207,7 @@ Test the full session lifecycle in minutes instead of hours:
 3. Describe the session
 4. Work for another 120 seconds → wrap prompt appears
 5. Choose "Extend 30 sec" or "Wrap & start new"
-6. Stop working for 2 minutes → session auto-closes
+6. Stop working for 1 minute → session force-closes and a fresh one starts
 
 **Important**: Reset `debugTimeScale` to `1` for normal use.
 

@@ -27,7 +27,7 @@
 A **session** represents a continuous engagement thread with a workspace. Sessions are:
 
 - **NOT day-bound** — an overnight coding session from 22:00 to 02:00 is a single session
-- **Bounded only by idle** — auto-close triggers after ~2h of no activity
+- **Bounded only by idle** — a session is force-closed after `staleSessionAfterMinutes` (default 60) of no activity and a fresh session starts; the 2h auto-close safety net is capped at that cutoff
 - **Always monitored** — events are never dropped: if a session ended (auto-close, manual end) and activity resumes, a fresh session starts silently at the next event
 - **Workspace-scoped** — each workspace folder has its own session track
 - **Persistent** — active sessions are snapshotted every 60s and on every state change
@@ -41,7 +41,7 @@ A **session** represents a continuous engagement thread with a workspace. Sessio
 5. **Describe prompt** — after ~90 active minutes, prompt at natural breakpoint
 6. **Wrap prompt** — after ~3.5h active minutes, prompt to wrap or extend
 7. **Idle check** — after `idleConfirmAfterMinutes` (15) of no activity, "Are you still there?"; "Yes" keeps the span open (counted outside VS Code), "I was away and came back" trims the idle time since the prompt and keeps tracking, ending or ignoring stops/skips
-8. **End** — user ends manually, VS Code closes (`vscode-shutdown`), or auto-close after 2h idle
+8. **End** — user ends manually, VS Code closes (`vscode-shutdown`), or auto-close after `staleSessionAfterMinutes` (default 60) idle — a stale session is closed as `auto-idle` and a fresh session starts immediately (no continue option)
 9. **Auto-restart** — any event that arrives with no open session (after a manual end or auto-idle close) silently starts a fresh session, so work is tracked even if every description/update prompt was skipped
 
 ### Auto-Start on Open
@@ -483,7 +483,8 @@ All settings are under `lalog.*` in VS Code settings (`settings.json`).
 | `lalog.idleGapMinutes` | number | `15` | Gap between events that still counts as active |
 | `lalog.idleConfirmAfterMinutes` | number | `15` | Idle before the "Are you still there?" check fires (confirmed idle counts as active outside VS Code) |
 | `lalog.progressAfterMinutes` | number | `60` | Active minutes between periodic progress-update prompts (timestamped notes) |
-| `lalog.autoEndAfterIdleMinutes` | number | `120` | Idle time before auto-close (2h). Sessions are not day-bound; this is the only boundary |
+| `lalog.autoEndAfterIdleMinutes` | number | `120` | Idle time before auto-close (2h). The stale-session cutoff (lalog.staleSessionAfterMinutes) takes effect first |
+| `lalog.staleSessionAfterMinutes` | number | `60` | Idle minutes after which a session is force-closed and cannot be continued; a new session starts automatically |
 | `lalog.debugTimeScale` | number | `1` | Divide all time thresholds by this factor. Set 60 to test a "4-hour" session in 4 minutes |
 | `lalog.logTerminalCommands` | boolean | `true` | Record terminal commands (requires shell integration) |
 | `lalog.redactPatterns` | string[] | `["TOKEN", "KEY", "SECRET", "PASSWORD", "PASS=", "API_KEY", "api[-_]?key"]` | Regex patterns redacted from logged terminal commands |
@@ -509,7 +510,8 @@ thresholdsMs(cfg) → {
   grace: 30 * 60 * 1000 / scale,
   hardSplit: 300 * 60 * 1000 / scale,      // 5h hard limit
   progressAt: 60 * 60 * 1000 / scale,      // periodic progress notes
-  autoEndIdle: 120 * 60 * 1000 / scale,
+  staleAfter: 60 * 60 * 1000 / scale,
+  autoEndIdle: min(120, 60) * 60 * 1000 / scale,  // clamped to staleAfter (60)
   maxGraceExtensions: 3,
 }
 ```
