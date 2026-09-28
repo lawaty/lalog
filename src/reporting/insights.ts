@@ -2,6 +2,7 @@ import { Session } from '../core/types';
 import { Project, resolveProject, resolveProjectName } from '../core/projects';
 import { splitActiveMinutes } from './spans';
 import { rangeStart, rangeEnd } from './ranges';
+import { DEFAULT_IDLE_GAP_MS } from '../core/config';
 
 export type InsightRange = 'today' | 'week' | 'month';
 
@@ -70,7 +71,7 @@ export function insightsFor(
   projects: Project[],
   range: InsightRange,
   now = Date.now(),
-  idleGapMs = 15 * 60 * 1000
+  idleGapMs = DEFAULT_IDLE_GAP_MS
 ): InsightsSnapshot {
   const start = rangeStart(range, now);
   const end = rangeEnd(range, now);
@@ -109,7 +110,7 @@ export function insightsFor(
     }
   }
 
-  const timeline = buildTimeline(inRange, projects, start, end);
+  const timeline = buildTimeline(inRange, projects, start, end, idleGapMs);
   return {
     totalMs,
     vscodeMs,
@@ -132,7 +133,8 @@ function buildTimeline(
   sessions: Session[],
   projects: Project[],
   start: number,
-  end: number
+  end: number,
+  idleGapMs: number
 ): InsightTimelineDay[] {
   // Per day: per-hour accumulated ms by project.
   const days = new Map<string, Map<number, Map<string, { ms: number; color: string }>>>();
@@ -143,7 +145,7 @@ function buildTimeline(
     const spans = s.activeSpans?.length
       ? s.activeSpans
       : s.activityTs?.length
-      ? reconstructSpans(s.activityTs)
+      ? reconstructSpans(s.activityTs, idleGapMs)
       : [];
     for (const span of spans) {
       const a = Math.max(span.start, s.startedAt, start);
@@ -205,7 +207,7 @@ function dayStartMs(day: string): number {
 }
 
 /** Rebuild contiguous spans from a legacy activity timestamp stream (gap rule). */
-function reconstructSpans(activityTs: number[]): { start: number; end: number }[] {
+function reconstructSpans(activityTs: number[], idleGapMs: number): { start: number; end: number }[] {
   const ts = [...activityTs].sort((a, b) => a - b);
   const spans: { start: number; end: number }[] = [];
   let runStart: number | null = null;
@@ -213,7 +215,7 @@ function reconstructSpans(activityTs: number[]): { start: number; end: number }[
   for (const t of ts) {
     if (runStart === null) {
       runStart = t;
-    } else if (prev !== null && t - prev > 15 * 60 * 1000) {
+    } else if (prev !== null && t - prev > idleGapMs) {
       spans.push({ start: runStart, end: prev });
       runStart = t;
     }
@@ -228,7 +230,8 @@ export function hourlyBreakdown(
   sessions: Session[],
   projects: Project[],
   dayStart: number,
-  dayEnd: number
+  dayEnd: number,
+  idleGapMs = DEFAULT_IDLE_GAP_MS
 ): { hourStart: number; ms: number; projectName: string }[] {
   const hours = new Map<number, { ms: number; projectName: string }>();
   for (const s of sessions) {
@@ -237,7 +240,7 @@ export function hourlyBreakdown(
     const spans = s.activeSpans?.length
       ? s.activeSpans
       : s.activityTs?.length
-      ? reconstructSpans(s.activityTs)
+      ? reconstructSpans(s.activityTs, idleGapMs)
       : [];
     for (const span of spans) {
       const a = Math.max(span.start, s.startedAt, dayStart);

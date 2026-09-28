@@ -26,10 +26,10 @@ export class PromptCoordinator {
   }
 
   /** Only one prompt visible at a time; min spacing between any two. */
-  private async acquire(): Promise<boolean> {
+  private async acquire(force = false): Promise<boolean> {
     const now = Date.now();
     if (this.visible) return false;
-    if (now - this.lastShownAt < this.minSpacingMs) return false;
+    if (!force && now - this.lastShownAt < this.minSpacingMs) return false;
     this.visible = true;
     this.lastShownAt = now;
     return true;
@@ -44,9 +44,10 @@ export class PromptCoordinator {
     machine: Machine,
     session: Session,
     breakpoint: BreakpointKind | null,
-    sameAsLast?: string
+    sameAsLast?: string,
+    force = false
   ): Promise<DescribeResult | null> {
-    if (!(await this.acquire())) return null;
+    if (!(await this.acquire(force))) return null;
     try {
       const result = await runDescribeFlow(session, { sameAsLast, aiDraft: this.aiDraft });
       return result;

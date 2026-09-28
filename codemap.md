@@ -17,20 +17,22 @@ Local-first VS Code work-session tracker. Extension entry is `src/extension.ts`;
 | **Activity capture** | `src/core/activityTracker.ts` | Editor/edit/save/fileop/task/debug event listeners → `TrackedEvent`s (data) |
 | **Spans** | `src/core/spans.ts` | Active-time span building, gap-based accrual, `trimToCutoff` (used at idle-end), outside-VS-Code classification |
 | **Storage** | `src/storage/store.ts` | FS primitives (`appendLine`, atomic rename), `workspaceKey`, `LaLogPaths` |
-| | `src/storage/sessionStore.ts` | Session CRUD: `newSession`, `saveActive` (60s snapshots), `close` → `sessions.jsonl`, `loadActive`, `updateSession` |
+| | `src/storage/sessionStore.ts` | Session CRUD: `newSession`, `saveActive` (60s snapshots), `close` → `sessions.jsonl`, `loadActive`, `updateSession`, `deleteSession` |
 | | `src/storage/projectRegistry.ts` | `projects.json` — claim folders, explicit session assignment, derive-on-read |
 | | `src/storage/technicalStore.ts` | Per-session sidecar JSONL (`technical/<id>.jsonl`) with rotation |
 | **Technical capture** | `src/capture/diffCapture.ts` | Unified diffs at save (redacted, capped at `maxDiffChars`) |
 | | `src/capture/terminalCapture.ts` | Shell-integration command/stdout capture (`read()` to async iterator), ANSI strip |
 | | `src/capture/aiLog.ts` | AI interaction metadata (char counts/latency only — never prompt/response text) |
 | | `src/capture/redactText.ts` | `compileRedactPatterns` from `lalog.redactPatterns` |
-| **UI** | `src/ui/panelView.ts` | Sessions/Insights tabs, Now box footer (pause/resume/end), session rows, project filter chips |
+| **UI** | `src/ui/panelView.ts` | Sessions/Insights tabs, Now box footer (pause/resume/end), session rows with row actions (edit ✎ / delete 🗑), project filter chips |
 | | `src/ui/statusBar.ts` | Status bar item + quick-actions menu |
 | **Reporting** | `src/reporting/report.ts` | Markdown report generation, scoping |
 | | `src/reporting/insights.ts` | Pure aggregations: totals, in/out split, per-project/day, hour timeline (`insightsFor`, `effectiveMs`) |
 | | `src/reporting/ranges.ts` | Range math (today/week/month/31-day) |
 | | `src/reporting/aggregate.ts` | `todayActiveMs`, `todayUntrackedMs` |
 | | `src/reporting/spans.ts` | Report-span helpers |
+| | `src/reporting/pdf.ts` | Dependency-free PDF 1.4 writer (base-14 fonts, xref, word wrap, deterministic bytes) |
+| | `src/reporting/pdfReport.ts` | Pure PDF model/render/save (presets, detail toggles, day grouping) |
 | **Integrations** | `src/integrations/git.ts` | `annotateSessionWithGit` — branch + commit subjects on close |
 | | `src/integrations/legacyExport.ts` | `files_by_day.txt` export |
 | **opencode (AI)** | `src/opencode/service.ts`, `bridge.ts`, `runTransport.ts` | Runs the local `opencode` CLI, JSON-line transport, retries/timeouts |

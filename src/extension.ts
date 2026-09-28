@@ -11,6 +11,17 @@ import { LaLogPanelProvider } from './ui/panelView';
 import { LaLogStatusBar } from './ui/statusBar';
 import { todayActiveMs, todayUntrackedMs } from './reporting/aggregate';
 import { generateReport, saveReport, calendarDayCount } from './reporting/report';
+import {
+  PdfOptions,
+  PdfPreset,
+  PdfToggleKey,
+  PDF_TOGGLE_KEYS,
+  buildPdfModel,
+  defaultPdfOptions,
+  renderPdfReport,
+  resolvePdfOptions,
+  savePdfReport,
+} from './reporting/pdfReport';
 import { ReportRange, rangeStart, rangeEnd, rangeLabel } from './reporting/ranges';
 import { exportFilesByDay } from './integrations/legacyExport';
 import { LaLogAiService, OpencodePreflightError } from './opencode/service';
@@ -110,7 +121,7 @@ export function activate(context: vscode.ExtensionContext): void {
     try {
       all = await store.loadAll();
     } catch {
-      statusBar.update(null, 0, 0, false);
+      statusBar.update(null, 0, 0, false, th.idleGap);
       return;
     }
     const today = todayActiveMs(all, Date.now());
@@ -120,7 +131,8 @@ export function activate(context: vscode.ExtensionContext): void {
       manager.getSession(),
       today,
       todayUntrackedMs(all, now),
-      manager.isPaused()
+      manager.isPaused(),
+      th.idleGap
     );
     panel.refresh();
   }
@@ -221,45 +233,9 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   registerCommand('lalog.report', async () => {
-    const rangePick = await vscode.window.showQuickPick(
-      [
-        { label: 'Today', id: 'today' as ReportRange },
-        { label: 'Yesterday', id: 'yesterday' as ReportRange },
-        { label: 'This week', id: 'week' as ReportRange },
-        { label: 'This month', id: 'month' as ReportRange },
-        { label: 'Last month', id: 'last-month' as ReportRange },
-        { label: 'Custom range\u2026', id: 'custom' as ReportRange },
-      ],
-      { title: 'LaLog report range' }
-    );
-    if (!rangePick) return;
-    let custom: { start: number; end: number } | undefined;
-    if (rangePick.id === 'custom') {
-      const input = await vscode.window.showInputBox({
-        title: 'Custom report range',
-        placeHolder: 'YYYY-MM-DD...YYYY-MM-DD (max 31 days)',
-        value: `${dayStamp(Date.now())}...${dayStamp(Date.now())}`,
-        ignoreFocusOut: true,
-      });
-      const m = input?.trim().match(/^(\d{4}-\d{2}-\d{2})\D+(\d{4}-\d{2}-\d{2})$/);
-      if (!m) {
-        vscode.window.showInformationMessage('Custom range needs two dates: YYYY-MM-DD...YYYY-MM-DD');
-        return;
-      }
-      const start = parseDay(m[1]);
-      const end = parseDay(m[2]);
-      if (end <= start) {
-        vscode.window.showInformationMessage('End date must be after start date.');
-        return;
-      }
-      if (calendarDayCount(start, end) > 31) {
-        vscode.window.showInformationMessage('Custom range is limited to 31 days.');
-        return;
-      }
-      const endInclusive = new Date(end);
-      endInclusive.setDate(endInclusive.getDate() + 1);
-      custom = { start, end: new Date(endInclusive.getFullYear(), endInclusive.getMonth(), endInclusive.getDate()).getTime() };
-    }
+    const picked = await pickReportRange('LaLog report range');
+    if (!picked) return;
+    const { range, custom } = picked;
     const projects = projectRegistry.list();
     const scopePick = await vscode.window.showQuickPick(
       [{ label: 'All sessions', id: '' }, ...projects.map((p) => ({ label: p.name, id: p.id }))],
@@ -270,14 +246,13 @@ export function activate(context: vscode.ExtensionContext): void {
       { location: vscode.ProgressLocation.Notification, title: 'LaLog: generating report\u2026' },
       async () => {
         const all = await store.loadAll();
-        const range = rangePick.id;
         const projectId = scopePick.id || null;
 
         let content = await generateReport(all, projects, range, {
           projectId,
           activeSession: manager.getSession(),
           custom,
-        });
+        }, Date.now(), th.idleGap);
 
         const svc = getAi();
         if (svc) {
@@ -295,6 +270,76 @@ export function activate(context: vscode.ExtensionContext): void {
         const file = saveReport(paths, content, { range, projectId, custom });
         const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
         await vscode.window.showTextDocument(doc, { preview: true });
+      }
+    );
+  });
+
+  registerCommand('lalog.exportPdf', async () => {
+    const picked = await pickReportRange('LaLog PDF range');
+    if (!picked) return;
+    const { range, custom } = picked;
+    const projects = projectRegistry.list();
+    const scopePick = await vscode.window.showQuickPick(
+      [{ label: 'All sessions', id: '' }, ...projects.map((p) => ({ label: p.name, id: p.id }))],
+      { title: 'LaLog PDF scope' }
+    );
+    if (scopePick === undefined) return;
+    const presetPick = await vscode.window.showQuickPick(
+      [
+        { label: 'Personal \u2014 full detail', id: 'personal' as PdfPreset },
+        { label: 'Client \u2014 minimal abstract sheet', id: 'client' as PdfPreset },
+      ],
+      { title: 'LaLog PDF preset' }
+    );
+    if (presetPick === undefined) return;
+    const defaults = defaultPdfOptions(presetPick.id);
+    const details: { label: string; id: PdfToggleKey | 'daySeparate' }[] = [
+      { label: 'Summary totals', id: 'includeSummaryTotals' },
+      { label: 'Per-day totals', id: 'includeDayTotals' },
+      { label: 'Time ranges', id: 'includeTimeRanges' },
+      { label: 'Descriptions', id: 'includeDescriptions' },
+      { label: 'Task types', id: 'includeTaskTypes' },
+      { label: 'Projects', id: 'includeProjects' },
+      { label: 'Workspaces', id: 'includeWorkspaces' },
+      { label: 'Top files', id: 'includeTopFiles' },
+      { label: 'Git activity', id: 'includeGit' },
+      { label: 'Notes', id: 'includeNotes' },
+      { label: 'Inside/outside split', id: 'includeInOutSplit' },
+      { label: 'Event counters', id: 'includeEventCounters' },
+      { label: 'Hourly log', id: 'includeHourlyLog' },
+      { label: 'Start each day on a new page', id: 'daySeparate' },
+    ];
+    const chosen = await vscode.window.showQuickPick(
+      details.map((d) => ({
+        label: d.label,
+        id: d.id,
+        picked: d.id === 'daySeparate' ? defaults.dayMode === 'separate' : defaults[d.id],
+      })),
+      { canPickMany: true, title: 'Include in PDF', placeHolder: 'Tick what to include' }
+    );
+    if (chosen === undefined) return;
+    const selected = new Set(chosen.map((p) => p.id));
+    const toggles: Partial<PdfOptions> = {};
+    for (const key of PDF_TOGGLE_KEYS) toggles[key] = selected.has(key);
+    toggles.dayMode = selected.has('daySeparate') ? 'separate' : 'grouped';
+    const options = resolvePdfOptions(presetPick.id, toggles);
+    const projectId = scopePick.id || null;
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: 'LaLog: exporting PDF\u2026' },
+      async () => {
+        const all = await store.loadAll();
+        const model = buildPdfModel(all, projects, range, {
+          projectId,
+          activeSession: manager.getSession(),
+          custom,
+        }, Date.now(), th.idleGap);
+        const buffer = renderPdfReport(model, options, {
+          projects,
+          idleGapMs: th.idleGap,
+        });
+        const file = savePdfReport(paths, buffer, { range, projectId, custom });
+        await vscode.env.openExternal(vscode.Uri.file(file));
+        vscode.window.showInformationMessage(`PDF exported: ${file}`);
       }
     );
   });
@@ -424,8 +469,40 @@ export function activate(context: vscode.ExtensionContext): void {
         needsDescription: !text,
         notes,
       });
-      panel.refresh();
+      await refreshStatus();
     }
+  });
+
+  registerCommand('lalog.deleteSession', async (id: unknown) => {
+    const sessionId = typeof id === 'string' ? id : '';
+    if (!sessionId) {
+      vscode.window.showInformationMessage('Use the 🗑 button on a session row in the LaLog Sessions panel.');
+      return;
+    }
+    // Defense-in-depth: the live session has no panel row (it only reaches
+    // sessions.jsonl when it ends), but never delete it from under the tracker.
+    const live = manager.getSession();
+    if (live && live.id === sessionId) {
+      vscode.window.showInformationMessage(
+        'End the session first — the current session is only saved to your history when it ends.'
+      );
+      return;
+    }
+    // Exact-id lookup — never fall back to the latest session (see ADR-023).
+    const all = await store.loadAll();
+    const target = all.find((s) => s.id === sessionId);
+    if (!target) return; // stale row / already deleted — silent no-op
+    const label = target.description || target.workspaceName;
+    const confirm = await vscode.window.showWarningMessage(
+      `Delete session "${label}"? This removes it from your history and deletes its technical sidecar. This cannot be undone.`,
+      { modal: true },
+      'Delete'
+    );
+    if (confirm !== 'Delete') return;
+    const removed = await store.deleteSession(sessionId);
+    if (!removed) return;
+    technicalStore.delete(sessionId);
+    await refreshStatus();
   });
 
   registerCommand('lalog.exportFilesByDay', async () => {
@@ -492,6 +569,63 @@ function filterByRange(sessions: Session[], range: ReportRange): Session[] {
 
 function rangeLabelOf(range: ReportRange): string {
   return rangeLabel(range);
+}
+
+/**
+ * Prompt for a report range, plus a validated custom window when picked.
+ * Returns undefined when the user cancels or supplies an unusable range.
+ */
+async function pickReportRange(
+  title: string
+): Promise<{ range: ReportRange; custom?: { start: number; end: number } } | undefined> {
+  const rangePick = await vscode.window.showQuickPick(
+    [
+      { label: 'Today', id: 'today' as ReportRange },
+      { label: 'Yesterday', id: 'yesterday' as ReportRange },
+      { label: 'This week', id: 'week' as ReportRange },
+      { label: 'This month', id: 'month' as ReportRange },
+      { label: 'Last month', id: 'last-month' as ReportRange },
+      { label: 'Custom range\u2026', id: 'custom' as ReportRange },
+    ],
+    { title }
+  );
+  if (!rangePick) return undefined;
+  const range = rangePick.id;
+  if (range !== 'custom') return { range };
+  const input = await vscode.window.showInputBox({
+    title: 'Custom report range',
+    placeHolder: 'YYYY-MM-DD...YYYY-MM-DD (max 31 days)',
+    value: `${dayStamp(Date.now())}...${dayStamp(Date.now())}`,
+    ignoreFocusOut: true,
+  });
+  const m = input?.trim().match(/^(\d{4}-\d{2}-\d{2})\D+(\d{4}-\d{2}-\d{2})$/);
+  if (!m) {
+    vscode.window.showInformationMessage('Custom range needs two dates: YYYY-MM-DD...YYYY-MM-DD');
+    return undefined;
+  }
+  const start = parseDay(m[1]);
+  const end = parseDay(m[2]);
+  if (end <= start) {
+    vscode.window.showInformationMessage('End date must be after start date.');
+    return undefined;
+  }
+  if (calendarDayCount(start, end) > 31) {
+    vscode.window.showInformationMessage('Custom range is limited to 31 days.');
+    return undefined;
+  }
+  const endInclusive = new Date(end);
+  endInclusive.setDate(endInclusive.getDate() + 1);
+  return {
+    range,
+    custom: {
+      start,
+      end: new Date(
+        endInclusive.getFullYear(),
+        endInclusive.getMonth(),
+        endInclusive.getDate()
+      ).getTime(),
+    },
+  };
 }
 
 function dayStamp(t: number): string {

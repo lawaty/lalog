@@ -1,5 +1,8 @@
 import * as vscode from 'vscode';
 
+/** Default idle gap in ms — fallback for reporting/UI when no config value is threaded. */
+export const DEFAULT_IDLE_GAP_MS = 15 * 60 * 1000;
+
 /** Raw config values read from VS Code settings (minutes for time fields). */
 export interface LaLogConfig {
   dataDir: string;

@@ -1,9 +1,7 @@
 import * as vscode from 'vscode';
 import { Session } from '../core/types';
 import { fmtDuration } from '../prompts/promptCoordinator';
-
-/** Display-only cap on the "live" estimate so idle time isn't shown as active. */
-const LIVE_CAP_MS = 15 * 60 * 1000;
+import { DEFAULT_IDLE_GAP_MS } from '../core/config';
 
 /** Status bar: "▶ <description> · 1h42m" — click for quick actions. */
 export class LaLogStatusBar implements vscode.Disposable {
@@ -22,7 +20,7 @@ export class LaLogStatusBar implements vscode.Disposable {
     this.item.show();
   }
 
-  update(session: Session | null, todayActiveMs: number, untrackedMs: number, paused = false): void {
+  update(session: Session | null, todayActiveMs: number, untrackedMs: number, paused = false, idleGapMs = DEFAULT_IDLE_GAP_MS): void {
     this.todayDuration = todayActiveMs;
     this.untrackedMin = Math.round(untrackedMs / 60000);
     if (!session || !session.startedAt) {
@@ -31,7 +29,7 @@ export class LaLogStatusBar implements vscode.Disposable {
       this.item.show();
       return;
     }
-    const liveMs = paused ? 0 : Math.min(Date.now() - session.lastActivityAt, LIVE_CAP_MS);
+    const liveMs = paused ? 0 : Math.min(Date.now() - session.lastActivityAt, idleGapMs);
     const activeMs = session.activeMinutes + liveMs;
     const desc = session.description ? ` ${session.description}` : '';
     const icon = paused ? '$(debug-pause)' : '$(play)';

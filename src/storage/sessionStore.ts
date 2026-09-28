@@ -49,12 +49,25 @@ export class SessionStore {
   }
 
   async loadAll(): Promise<Session[]> {
-    const sessions: Session[] = [];
+    const byId = new Map<string, Session>();
     await streamLines(this.opts.paths.sessionsFile, (o) => {
       const s = o as Session;
-      if (s.id && s.startedAt !== undefined) sessions.push(normalizeSession(s));
+      if (s.id && s.startedAt !== undefined) {
+        // Keep the last occurrence per id: a stale duplicate line (e.g. from an
+        // old version or an interrupted close) must never list/count twice.
+        byId.set(s.id, normalizeSession(s));
+      }
     });
-    return sessions.sort((a, b) => a.startedAt - b.startedAt);
+    return [...byId.values()].sort((a, b) => a.startedAt - b.startedAt);
+  }
+
+  /** Whether a session with this id is already recorded in the closed log. */
+  async hasId(id: string): Promise<boolean> {
+    let found = false;
+    await streamLines(this.opts.paths.sessionsFile, (o) => {
+      if ((o as Session).id === id) found = true;
+    });
+    return found;
   }
 
   /** Rewrite the full sessions file, replacing the targeted session's fields. */
@@ -65,6 +78,38 @@ export class SessionStore {
     all[idx] = { ...all[idx], ...patch };
     const fs = require('fs') as typeof import('fs');
     fs.writeFileSync(this.opts.paths.sessionsFile, all.map((s) => JSON.stringify(s)).join('\n') + '\n');
+  }
+
+  /**
+   * Remove every line for a session id by rewriting the file. Operates on the
+   * RAW lines (not loadAll, which dedupes) so stale duplicate lines for the id
+   * are removed too, while malformed lines and other sessions' lines are kept
+   * verbatim. Returns true if anything was removed; false means the id was not
+   * found and no write happened.
+   */
+  async deleteSession(id: string): Promise<boolean> {
+    const file = this.opts.paths.sessionsFile;
+    const fs = require('fs') as typeof import('fs');
+    if (!fs.existsSync(file)) return false;
+    const lines = fs.readFileSync(file, 'utf8').split('\n');
+    const kept: string[] = [];
+    let removed = 0;
+    for (const line of lines) {
+      if (line.trim()) {
+        try {
+          if ((JSON.parse(line) as Session).id === id) {
+            removed += 1;
+            continue;
+          }
+        } catch {
+          /* keep malformed lines verbatim */
+        }
+      }
+      kept.push(line);
+    }
+    if (!removed) return false;
+    fs.writeFileSync(file, kept.join('\n'));
+    return true;
   }
 
   newSession(wsKey: string, wsName: string, now: number): Session {

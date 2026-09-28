@@ -7,6 +7,7 @@ import { splitActiveMinutes } from './spans';
 import { resolveProject, resolveProjectName, Project } from '../core/projects';
 import { hourlyBreakdown, effectiveMs } from './insights';
 import { ReportRange, rangeStart, rangeEnd, rangeLabel } from './ranges';
+import { DEFAULT_IDLE_GAP_MS } from '../core/config';
 
 export { ReportRange, rangeStart, rangeEnd, rangeLabel } from './ranges';
 
@@ -26,7 +27,7 @@ export async function generateReport(
   range: ReportRange,
   options: ReportOptions = {},
   now = Date.now(),
-  idleGapMs = 15 * 60 * 1000
+  idleGapMs = DEFAULT_IDLE_GAP_MS
 ): Promise<string> {
   const start = options.custom?.start ?? rangeStart(range, now);
   const end = options.custom?.end ?? rangeEnd(range, now);
@@ -84,7 +85,7 @@ export async function generateReport(
   // Count calendar days (DST-safe) rather than dividing ms by 24h.
   if (calendarDayCount(start, end) <= 1 && within.length) {
     lines.push('## Hourly log');
-    const hours = hourlyBreakdown(within, projects, start, end);
+    const hours = hourlyBreakdown(within, projects, start, end, idleGapMs);
     for (const h of hours) {
       const from = new Date(h.hourStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       lines.push(`- ${from} — ${fmtDuration(h.ms)} — ${h.projectName}`);
@@ -146,7 +147,7 @@ export interface ReportFileOptions {
   now?: number;
 }
 
-function localStamp(t: number): string {
+export function localStamp(t: number): string {
   const d = new Date(t);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
@@ -172,6 +173,6 @@ export function saveReport(paths: LaLogPaths, content: string, opts: ReportFileO
   return file;
 }
 
-function safeSlug(s: string): string {
+export function safeSlug(s: string): string {
   return s.replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'project';
 }

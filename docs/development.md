@@ -199,7 +199,7 @@ Test the full session lifecycle in minutes instead of hours:
 | Grace period | 30 min | 30 sec |
 | Stale cutoff | 60 min (1h) | 60 sec (1 min) |
 | Auto-close idle | 120 min (2h, capped at stale cutoff) | 60 sec (1 min, capped) |
-| Idle gap | 5 min | 5 sec |
+| Idle gap | 15 min | 15 sec |
 
 **Example workflow** (scale=60):
 1. Start a session

@@ -110,7 +110,14 @@ export class SessionManager implements vscode.Disposable {
     // snapshot implies an abnormal exit. Close it without asking and start fresh.
     const existing = this.store.loadActive(wsKey);
     if (existing) {
-      await this.finishRecovered(existing, 'recovery-skip', existing.lastActivityAt);
+      if (await this.store.hasId(existing.id)) {
+        // Already recorded as closed (a previous close appended the line but
+        // failed to remove the snapshot). Drop the stale snapshot instead of
+        // re-recording the session — otherwise it would show up twice.
+        this.store.removeActive(wsKey);
+      } else {
+        await this.finishRecovered(existing, 'recovery-skip', existing.lastActivityAt);
+      }
     }
 
     this.openSpanStart = null;
@@ -191,6 +198,8 @@ export class SessionManager implements vscode.Disposable {
   private idlePromptOpen = false;
   /** Epoch ms the idle prompt was shown (in-memory only; not persisted). */
   private idleAskedAt: number | null = null;
+  /** lastActivityAt as of the moment the idle prompt was shown. */
+  private idleAskedLastActivityAt: number | null = null;
   /** Active minutes at the last progress note — re-arm after progressAt more. */
   private lastProgressActiveMin = 0;
   /** Guard against stacking progress-update prompts. */
@@ -372,6 +381,7 @@ export class SessionManager implements vscode.Disposable {
     if (now < this.lastIdleArmAt) return;
     this.idlePromptOpen = true;
     this.idleAskedAt = Date.now();
+    this.idleAskedLastActivityAt = m.lastActivityAt;
     const session = this.session;
     void this.prompts.askStillWorking(session).then((choice) => {
       this.idlePromptOpen = false;
@@ -402,15 +412,21 @@ export class SessionManager implements vscode.Disposable {
   /**
    * Retroactively cut accrued time back to the moment the idle prompt was asked
    * (dropping the away window). Shared by the 'end' and 'I was away' responses.
+   *
+   * The cut-off snapshot is the state as of the prompt, not the current one:
+   * activity that landed while the dialog was open must not lengthen the
+   * surviving run, or the trim would bill the user for time they were absent.
    */
   private trimIdleAwayWindow(): void {
     const askAt = this.idleAskedAt;
+    const askLastActivityAt = this.idleAskedLastActivityAt;
     this.idleAskedAt = null;
+    this.idleAskedLastActivityAt = null;
     if (askAt == null || !this.session) return;
     const trimmed = trimToCutoff(
       this.session.activeSpans,
       this.openSpanStart,
-      this.machine.lastActivityAt ?? askAt,
+      askLastActivityAt ?? this.machine.lastActivityAt ?? askAt,
       this.machine.activeMinutes,
       this.session.activityTs,
       askAt,
@@ -489,11 +505,11 @@ export class SessionManager implements vscode.Disposable {
     void this.runDescribe(null);
   }
 
-  private async runDescribe(breakpoint: BreakpointKind | null): Promise<void> {
+  private async runDescribe(breakpoint: BreakpointKind | null, force = false): Promise<void> {
     if (!this.session) return;
     const session = this.session;
     const sameAsLast = this.lastDescriptionFor ? await this.lastDescriptionFor(session.workspaceKey) : undefined;
-    const result = await this.prompts.askDescribe(this.machine, session, breakpoint, sameAsLast);
+    const result = await this.prompts.askDescribe(this.machine, session, breakpoint, sameAsLast, force);
     if (!result) return;
     this.applyDescribeResult(session, result);
   }
@@ -551,9 +567,10 @@ export class SessionManager implements vscode.Disposable {
     }
     if (result.choice === 'extend' || result.choice === 'extend-described') {
       this.machine.graceExtensions += 1;
-      if (this.machine.graceExtensions >= this.th.maxGraceExtensions) {
-        // must describe to extend
-        await this.runDescribe(null);
+      if (this.machine.graceExtensions > this.th.maxGraceExtensions) {
+        // must describe to extend — bypass the coordinator's min-spacing so the
+        // prompt actually appears right after the wrap choice (US-3.8).
+        await this.runDescribe(null, true);
       }
       this.machine.state = 'grace';
       this.machine.lastActivityAt = now;
@@ -679,6 +696,7 @@ export class SessionManager implements vscode.Disposable {
 
   start(): void {
     this.activity.start();
+    this.breakpoints.start();
     // Technical capture: terminal shell execution events
     if (this.captureCfg.captureTerminal) {
       const api = vscode.window as unknown as {

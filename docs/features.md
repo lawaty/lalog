@@ -302,8 +302,26 @@ One webview panel in the activity bar (LaLog icon) with three tabs — **Session
 - Expand a session to see its full detail: description, active vs outside-VS-Code time split (from `splitActiveMinutes`), type, closed reason, time range, per-kind event counters, top files, the timestamped notes timeline, and git branch/commits
 - Detail actions: change the session's project (assign picker) and, for undescribed sessions, **Keep as background work** / **Not background anymore**
 - Files and notes expand into rows (file → edit count; note → timestamped text)
-- Each session has an ✎ button → `lalog.editSession` command
+- Each session has an ✎ button → `lalog.editSession` command, and a 🗑 button → `lalog.deleteSession` (see [Delete a Session](#delete-a-session))
 - Sessions are grouped by start-date day (newest first); the most recent day group is expanded by default and only collapses if you explicitly close it, so a session that just ended is immediately visible
+
+### Delete a Session
+
+Every session row carries a 🗑 button next to ✎. Pressing it asks for a **modal** confirmation naming the session (its description, or the workspace when it has none); anything but "Delete" — including Esc — is a no-op.
+
+On confirm, LaLog:
+
+- removes **every** line for that session id from `sessions.jsonl` (raw-line filter, so a stale duplicate line can't resurrect it) while leaving malformed lines and other sessions' lines exactly as they were
+- deletes the session's technical sidecar (`technical/<id>.jsonl`)
+- re-derives everything: the row disappears, the day group's session count and total recompute, the Insights tab updates, and the status bar plus the panel's "today" total both refresh immediately
+
+Guards:
+
+- **The live session can't be deleted** — it isn't in `sessions.jsonl` until it ends, so you get "End the session first". End it (and start a fresh one) if you really want it gone.
+- **Unknown or missing id = silent no-op** — never a fallback to "the latest session", so a stale row can never delete the wrong session.
+- Invoked from the command palette without an id, the command explains to use the panel's 🗑 button.
+
+Deleting is irreversible: there is no trash and no undo.
 
 ### Anonymous / Background Sessions
 
@@ -419,6 +437,30 @@ Sessions started: 2026-09-01, 2026-09-02, 2026-09-03
 
 **Report storage**: Saved to `~/.lalog/reports/<start-date>-<range>[<project-slug>].md` with a non-overwriting, date-prefixed filename (e.g. `2026-09-07-this-week-my-project.md`, `2026-09-03-custom.md`). Each range of a different period gets its own file.
 
+### PDF Export
+
+`lalog.exportPdf` renders the same session-centric data as a PDF, without adding any dependency. The flow is four prompts deep:
+
+1. **Range** — Today, Yesterday, This week, This month, Last month, or a custom range (shared with `lalog.report` via `pickReportRange`; custom ranges are capped at 31 days).
+2. **Scope** — all sessions, or one project.
+3. **Preset** — `personal` (full detail) or `client` (minimal abstract sheet).
+4. **Details** — a multi-select checkbox list, pre-ticked from the chosen preset. The tick state overrides the preset for that run.
+
+**Checkbox items (14)** — Summary totals, Per-day totals, Time ranges, Descriptions, Task types, Projects, Workspaces, Top files, Git activity, Notes, Inside/outside split, Event counters, Hourly log, and "Start each day on a new page".
+
+**Day mode**: `grouped` (default for `personal`) lays out one section per day, flowing continuously down the pages. `separate` (default for `client`) starts every day on a fresh page. Session durations always render — a time report without durations is useless.
+
+**Presets**
+
+| Preset | Includes | Day mode |
+|--------|----------|----------|
+| `personal` | everything: totals, time ranges, descriptions, task types, projects, workspaces, top files, git, notes, in/outside split, event counters, hourly log | grouped |
+| `client` | day headings, time ranges, descriptions, projects, and durations only | separate |
+
+**Output**: `~/.lalog/reports/<date>-<range>[-<project-slug>][-N].pdf` with the same non-overwriting naming as markdown reports, then opened with the system PDF viewer via `vscode.env.openExternal`. Cancelling any prompt writes nothing; an empty checkbox list is not a cancel — it renders a bare document (day headings and durations only).
+
+**Implementation**: `src/reporting/pdf.ts` is a small hand-rolled PDF 1.4 writer — base-14 fonts (Helvetica / -Bold / -Oblique) with `/WinAnsiEncoding`, uncompressed content streams, no `/Info` dictionary, and a hand-written xref table. Because no creation timestamp is embedded, identical input produces **byte-identical** output. The known limitation is the encoder: characters outside latin-1 become `?`.
+
 ### Aggregate Helpers
 
 - `todayActiveMs(sessions, now)` — sum of active time for sessions started today
@@ -531,14 +573,17 @@ thresholdsMs(cfg) → {
 | Keep as background work | `lalog.background` | Mark the current session anonymous (no more labeling prompts on it) |
 | Generate report | `lalog.report` | Session-centric markdown report (range + project scope + custom range) |
 | Export sessions CSV | `lalog.exportCsv` | Dump all sessions to `~/.lalog/exports/sessions-<date>.csv` |
+| Export PDF report | `lalog.exportPdf` | Range + scope + preset + detail checkboxes → PDF in `~/.lalog/reports` |
 | Show sessions | `lalog.showSessions` | Focus the sessions sidebar view |
 | Edit session | `lalog.editSession` | Update a session's description |
+| Delete session | `lalog.deleteSession` | Remove a closed session and its technical sidecar (modal confirm; from the panel's 🗑 button) |
 | Export files by day | `lalog.exportFilesByDay` | Legacy `files_by_day.txt` export |
 
 ---
 
 ## Related Pages
 
+- [User Stories](user-stories.md) — the jobs these features do, with acceptance criteria
 - [Architecture](architecture.md) — module overview and data flow
 - [Decisions](decisions.md) — why sessions aren't day-bound, gap-based time model, etc.
 - [Data Format](data-format.md) — JSONL schema and snapshot format

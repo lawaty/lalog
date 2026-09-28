@@ -76,10 +76,15 @@ async function pickTypeWithText(
   }
   items.push({ label: '$(clock) Later', detail: 'skip for now, add from backlog', t: 'later' });
 
-  const chosen = await quickPickWithDefault(items, {
-    title: 'Task type?',
-    placeHolder: 'Enter saves as "other" — pick another type to override.',
-  });
+  const otherIdx = items.findIndex((i) => i.t === 'other');
+  const chosen = await quickPickWithDefault(
+    items,
+    {
+      title: 'Task type?',
+      placeHolder: 'Enter saves as "other" — pick another type to override.',
+    },
+    otherIdx >= 0 ? otherIdx : 0
+  );
   if (!chosen) return { choice: 'skipped' };
   if (chosen.t === 'ai' && aiDraft) return acceptAiDraft(aiDraft, text);
   if (chosen.t === 'background') return { choice: 'background' };
@@ -93,9 +98,10 @@ async function pickTypeWithText(
  */
 async function quickPickWithDefault<T extends vscode.QuickPickItem>(
   allItems: T[],
-  opts: { title?: string; placeHolder?: string }
+  opts: { title?: string; placeHolder?: string },
+  defaultIndex = 0
 ): Promise<T | undefined> {
-  const defaultItem = allItems[0];
+  const defaultItem = allItems[defaultIndex] ?? allItems[0];
   const qp = vscode.window.createQuickPick<T>();
   qp.title = opts.title;
   qp.placeholder = opts.placeHolder;

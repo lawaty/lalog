@@ -29,6 +29,8 @@ The current implementation (v0.1.0) includes:
 - ✅ **Git integration** — branch + commit annotation
 - ✅ **Legacy export** — `files_by_day.txt` format
 - ✅ **Status bar + tree view** — live duration, session list
+- ✅ **Session deletion** — confirmed 🗑 delete from the panel, sidecar cleanup, stats auto-update
+- ✅ **PDF export** — dependency-free PDF reports with personal/client presets and detail toggles
 - ✅ **debugTimeScale** — test 4h sessions in 4 minutes
 - ✅ **Optional AI (off by default)** — draft descriptions, report narrative, work analysis via the local `opencode` CLI
 
@@ -184,6 +186,7 @@ If a feature contradicts these principles, it's explicitly excluded (or relegate
 
 ## Related Pages
 
+- [User Stories](user-stories.md) — the jobs LaLog is built to do (and its non-goals)
 - [Architecture](architecture.md) — module overview and data flow
 - [Features](features.md) — what IS built
 - [Decisions](decisions.md) — why certain decisions were made

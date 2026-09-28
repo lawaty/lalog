@@ -1,4 +1,5 @@
 import { Session } from '../core/types';
+import { DEFAULT_IDLE_GAP_MS } from '../core/config';
 
 export interface ActiveBreakdown {
   totalMs: number;
@@ -15,7 +16,7 @@ export interface ActiveBreakdown {
  * Legacy sessions without spans are reconstructed from the activity timestamp
  * stream using the same gap rule the tracker used.
  */
-export function splitActiveMinutes(s: Session, idleGapMs = 15 * 60 * 1000): ActiveBreakdown {
+export function splitActiveMinutes(s: Session, idleGapMs = DEFAULT_IDLE_GAP_MS): ActiveBreakdown {
   const spans = s.activeSpans ?? [];
   const ts = s.activityTs ?? [];
   let vscodeMs = 0;

@@ -73,6 +73,8 @@ flowchart TB
         INS["insights.ts<br/>Pure per-period aggregations"]
         RNG["ranges.ts<br/>Range start/end math (pure)"]
         RPT["report.ts<br/>Markdown report generation"]
+        PDF["pdf.ts<br/>Dependency-free PDF 1.4 writer"]
+        PDR["pdfReport.ts<br/>PDF model, presets, detail toggles"]
     end
 
     subgraph integrations["integrations/"]
@@ -119,10 +121,10 @@ flowchart TB
 | **core/** | `stateMachine.ts`, `sessionManager.ts`, `activityTracker.ts`, `breakpoints.ts`, `config.ts`, `spans.ts`, `projects.ts`, `types.ts` | Pure state machine, session orchestration (idle/progress/auto-end checks), VS Code event capture, breakpoint detection, configuration, active-span arithmetic, project resolution (derive-on-read + explicit override) |
 | **capture/** | `diffCapture.ts`, `terminalCapture.ts`, `aiLog.ts`, `redactText.ts` | Unified diff generation at file save, terminal shell execution capture (command + exit code + duration + optional stdout), AI interaction metadata (char counts only), redaction utilities |
 | **prompts/** | `promptCoordinator.ts`, `describeFlow.ts` | Prompt mutex (one at a time, min spacing), text-first 2-step describe UI (InputBox → task-type QuickPick), progress/idle prompts, anonymous-sensitive option hiding |
-| **storage/** | `sessionStore.ts`, `projectRegistry.ts`, `store.ts`, `technicalStore.ts` | Session CRUD, JSONL append, atomic snapshots, curated `projects.json` registry (atomic rewrite), per-session technical sidecar JSONL, filesystem primitives |
-| **reporting/** | `aggregate.ts`, `report.ts`, `insights.ts`, `ranges.ts`, `spans.ts` | Today's active/untracked time, session-centric markdown reports (project scope, custom range, hourly log), pure period aggregations + 24h timeline, range math, in/out-of-VS-Code split |
+| **storage/** | `sessionStore.ts`, `projectRegistry.ts`, `store.ts`, `technicalStore.ts` | Session CRUD (including confirmed deletion via raw-line rewrite), JSONL append, atomic snapshots, curated `projects.json` registry (atomic rewrite), per-session technical sidecar JSONL, filesystem primitives |
+| **reporting/** | `aggregate.ts`, `report.ts`, `pdf.ts`, `pdfReport.ts`, `insights.ts`, `ranges.ts`, `spans.ts` | Today's active/untracked time, session-centric markdown reports (project scope, custom range, hourly log), dependency-free PDF export (base-14 fonts, byte-deterministic) with personal/client presets and per-detail toggles, pure period aggregations + 24h timeline, range math, in/out-of-VS-Code split |
 | **integrations/** | `git.ts`, `legacyExport.ts` | Git branch/commit annotation, legacy `files_by_day.txt` export |
-| **ui/** | `statusBar.ts`, `panelView.ts` | Status bar (live duration + description), single webview panel — **Sessions / Insights / Projects** tabs (scrollable, day-grouped sessions with project filter chips + anonymous states), with the "Current Session" card as a fixed non-scrolling footer |
+| **ui/** | `statusBar.ts`, `panelView.ts` | Status bar (live duration + description), single webview panel — **Sessions / Insights / Projects** tabs (scrollable, day-grouped sessions with project filter chips + anonymous states, per-row edit/delete actions), with the "Current Session" card as a fixed non-scrolling footer |
 
 ---
 

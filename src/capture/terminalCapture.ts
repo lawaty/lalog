@@ -107,7 +107,7 @@ export class TerminalCapture {
     const result: TechnicalTerminal = {
       type: 'terminal',
       ts: this.now(),
-      commandLine: entry.commandLine,
+      commandLine: redactText(entry.commandLine, this.redactPatterns),
       exitCode: exitCode ?? null,
       durationMs,
       cwd: entry.cwd,

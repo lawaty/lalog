@@ -172,6 +172,7 @@ export class LaLogPanelProvider implements vscode.WebviewViewProvider {
       Promise.resolve(this.getActive()),
       Promise.resolve(this.getNow()),
     ]);
+    if (!this.view) return; // panel may have been disposed while awaiting
     const projects = this.registry.list();
     const nowTs = Date.now();
     const insSessions = active ? [...sessions, active] : sessions;
@@ -220,6 +221,9 @@ export class LaLogPanelProvider implements vscode.WebviewViewProvider {
     switch (type) {
       case 'edit':
         if (id) void vscode.commands.executeCommand('lalog.editSession', id);
+        return;
+      case 'delete':
+        if (id) void vscode.commands.executeCommand('lalog.deleteSession', id);
         return;
       case 'pause':
         void vscode.commands.executeCommand('lalog.pauseSession');
@@ -379,6 +383,7 @@ export class LaLogPanelProvider implements vscode.WebviewViewProvider {
     padding: 1px 4px; border-radius: 3px; font-size: 12px; flex-shrink: 0;
   }
   .editbtn:hover { background: var(--vscode-toolbar-hoverBackground); }
+  .delbtn:hover { background: var(--vscode-inputValidation-errorBackground, var(--vscode-toolbar-hoverBackground)); }
 
   .card {
     display: flex; flex-direction: column; gap: 6px;
@@ -637,6 +642,10 @@ export class LaLogPanelProvider implements vscode.WebviewViewProvider {
     editBtn.title = 'Edit description';
     editBtn.addEventListener('click', (e) => { e.stopPropagation(); vscode.postMessage({ type: 'edit', id: s.id }); });
     header.appendChild(editBtn);
+    const delBtn = el2('button', 'editbtn delbtn', '\ud83d\uddd1');
+    delBtn.title = 'Delete session';
+    delBtn.addEventListener('click', (e) => { e.stopPropagation(); vscode.postMessage({ type: 'delete', id: s.id }); });
+    header.appendChild(delBtn);
     header.addEventListener('click', () => {
       if (sOpen) open.sessions.delete(s.id); else open.sessions.add(s.id);
       renderSessions();

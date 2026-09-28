@@ -3,7 +3,7 @@
   "displayName": "LaLog",
   "description": "Local-first work session tracker with automatic event capture, human session descriptions, and optional opencode-powered AI assistance.",
   "icon": "resources/icon.png",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "publisher": "lawaty",
   "license": "MIT",
   "repository": {
@@ -204,6 +204,10 @@
         "title": "LaLog: Export sessions to CSV"
       },
       {
+        "command": "lalog.exportPdf",
+        "title": "LaLog: Export sessions to PDF"
+      },
+      {
         "command": "lalog.analysis",
         "title": "LaLog: Analyze my work",
         "enablement": "config.lalog.ai.enabled"
@@ -215,6 +219,10 @@
       {
         "command": "lalog.editSession",
         "title": "LaLog: Edit session"
+      },
+      {
+        "command": "lalog.deleteSession",
+        "title": "LaLog: Delete session"
       },
       {
         "command": "lalog.exportFilesByDay",
@@ -245,7 +253,7 @@
     "build": "node esbuild.js",
     "watch": "node esbuild.js --watch",
     "typecheck": "tsc --noEmit",
-    "test": "node esbuild.test.js && node --test \"dist-test/*.test.js\"",
+    "test": "node esbuild.test.js && node --test \"dist-test/**/*.test.js\"",
     "package": "vsce package"
   },
   "devDependencies": {

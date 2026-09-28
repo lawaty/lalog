@@ -2,13 +2,13 @@
 
 > Local-first VS Code extension for automatic work session tracking with human descriptions and optional opencode-powered AI assistance.
 
-[Home](README.md) · [Architecture](architecture.md) · [Features](features.md) · [Decisions](decisions.md) · [Development](development.md) · [Data Format](data-format.md) · [Roadmap](roadmap.md)
+[Home](README.md) · [Architecture](architecture.md) · [Features](features.md) · [User Stories](user-stories.md) · [Decisions](decisions.md) · [Development](development.md) · [Data Format](data-format.md) · [Roadmap](roadmap.md)
 
 ---
 
 ## Overview
 
-LaLog (formerly "Worklog") is a VS Code extension (v0.3.1) that passively tracks your coding sessions — capturing edits, saves, terminal commands, file operations, debug sessions, and tasks — then prompts you at natural breakpoints to describe what you were working on. All data stays local in `~/.lalog/`.
+LaLog (formerly "Worklog") is a VS Code extension (v0.5.0) that passively tracks your coding sessions — capturing edits, saves, terminal commands, file operations, debug sessions, and tasks — then prompts you at natural breakpoints to describe what you were working on. All data stays local in `~/.lalog/`.
 
 AI assistance is **optional and off by default**: when enabled, LaLog uses the local `opencode` CLI to help draft session descriptions, add a narrative to reports, and produce a work review. It never captures or sends file contents or terminal output — only the compact session summary (file paths, counters, git branch, commit subjects).
 
@@ -18,6 +18,7 @@ AI assistance is **optional and off by default**: when enabled, LaLog uses the l
 |------|-------------|
 | [Architecture](architecture.md) | Module overview, data flow, Mermaid diagrams of the state machine and session lifecycle |
 | [Features](features.md) | Every feature organized by area: session tracking, prompts, storage, UI, reporting, integrations |
+| [User Stories](user-stories.md) | The jobs LaLog is built to do, from the user's point of view, with acceptance criteria and non-goals |
 | [Decisions](decisions.md) | Architecture Decision Records (ADRs) — why sessions aren't day-bound, gap-based time model, JSONL storage, etc. |
 | [Development](development.md) | How to build, test, package, and run the extension. npm scripts, debugTimeScale testing, contribution flow |
 | [Data Format](data-format.md) | JSONL schema, active snapshots, export formats, report output. Example JSON |
@@ -116,6 +117,7 @@ docs/
 ├── README.md          ← you are here
 ├── architecture.md    ← module/data-flow overview with Mermaid diagrams
 ├── features.md        ← every feature by area
+├── user-stories.md    ← user stories with acceptance criteria and non-goals
 ├── decisions.md       ← ADRs
 ├── development.md     ← build/test/package/run
 ├── data-format.md     ← JSONL schema, snapshots, exports

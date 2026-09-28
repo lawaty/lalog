@@ -30,6 +30,8 @@
 - [ADR-020: Remove the Describe-Before-Exit Prompt](#adr-020-remove-the-describe-before-exit-prompt)
 - [ADR-021: Remove the On-Start Description Prompt](#adr-021-remove-the-on-start-description-prompt)
 - [ADR-022: Hard 1h Stale-Session Cutoff — No Continuation](#adr-022-hard-1h-stale-session-cutoff--no-continuation)
+- [ADR-023: Confirmed Session Deletion (Full-File Rewrite, No Fallback)](#adr-023-confirmed-session-deletion-full-file-rewrite-no-fallback)
+- [ADR-024: Hand-Rolled PDF Writer (Zero New Dependencies)](#adr-024-hand-rolled-pdf-writer-zero-new-dependencies)
 
 ---
 
@@ -86,7 +88,7 @@
 2. **Event gaps** — measure time between events, only count gaps < threshold
 3. **Heartbeat** — periodic "are you there?" pings
 
-**Decision**: Use event gaps. Active time is computed from the time between consecutive events. Only gaps < `idleGap` (default 5 min) count as active.
+**Decision**: Use event gaps. Active time is computed from the time between consecutive events. Only gaps < `idleGap` (default 15 min) count as active.
 
 **Rationale**:
 - **Never trust interval timers** — `setInterval` is unreliable (throttled in background, paused when laptop sleeps)
@@ -99,7 +101,7 @@
 // In stateMachine.onActivity():
 if (m.lastActivityAt !== null) {
   const gap = now - m.lastActivityAt;
-  if (gap < th.idleGap) {        // idleGap default: 5 min
+  if (gap < th.idleGap) {        // idleGap default: 15 min
     m.activeMinutes += gap;
   }
 }
@@ -555,6 +557,58 @@ export function thresholdsMs(cfg: WorklogConfig): ThresholdsMs {
 **Implementation**: `src/core/config.ts` (`staleSessionAfterMinutes`, `staleAfter`, clamped `autoEndIdle`), `src/core/stateMachine.ts` (`isStale` pure predicate), `src/core/sessionManager.ts` (`checkStale`, heartbeat + `onActivityEvent` triggers, `checkIdle` guard), `package.json` (setting contribution, removed stale `lalog.resumeWindowMinutes`).
 
 **Test coverage**: `test/stateMachine.test.ts` — `isStale` boundary tests (null, exactly-at, just-under, past cutoff); `staleAfter` added to threshold literals in `test/stateMachine.test.ts` and `test/sessionStore.test.ts`.
+
+---
+
+## ADR-023: Confirmed Session Deletion (Full-File Rewrite, No Fallback)
+
+**Status**: Accepted
+
+**Context**: `sessions.jsonl` is append-only (ADR-004), and `updateSession` already rewrites the whole file when a description changes. But there was no way to remove a session: a mistracked or noise session stays in the history forever, inflating every total. `TechnicalStore.delete(sessionId)` existed but was never called, so orphaned sidecars accumulated too.
+
+**Decision**:
+1. **Always confirm, modally** — `lalog.deleteSession` shows a modal `showWarningMessage` naming the session; anything other than "Delete" is a no-op. Deletion is destructive and unrecoverable (no tombstone, no undo).
+2. **`SessionStore.deleteSession` filters RAW lines** — not `loadAll()`, which dedupes (last occurrence per id wins), drops malformed lines, and re-sorts. A destructive operation must mutate *exactly* the target lines: all lines for the id are removed, while blank lines, malformed lines, and other sessions' lines (including their duplicates) are preserved verbatim. Not-found → `false`, and no write happens.
+3. **Sidecar cleanup via `TechnicalStore.delete`** — the same id is removed from `technical/<id>.jsonl` (a no-op when absent).
+4. **The live session is blocked** with "End the session first" — the in-progress session only reaches `sessions.jsonl` when it ends, so there is nothing to delete and deleting it would orphan the snapshot.
+5. **No fallback-to-latest id** — unlike `lalog.editSession`, delete requires an *exact* id match and silently no-ops otherwise. A stale/bogus id from a stale webview row must never be able to delete the newest session by accident.
+6. **Refresh flows through `refreshStatus()` from the command** — it updates the status bar, `cachedTodayMs` (the "today" total in the panel footer), and calls `panel.refresh()`, which re-derives rows, day groups, and insights from the rewritten file. The panel stays a thin router: the 🗑 button posts `{ type: 'delete', id }` and the command owns confirm + delete + refresh. If this logic ever moved *into* the panel, an `onChanged` constructor callback wired to `refreshStatus` would become the right escape hatch.
+
+**Rationale**:
+- Raw-line filtering is the only approach that is safe for both directions: it cannot resurrect a session via a stale duplicate line, and it cannot collateral-damage a malformed or duplicated line belonging to another session.
+- Exact-id matching turns a class of silent data loss (delete the wrong session) into a silent no-op.
+- Routing refresh through the single existing `refreshStatus()` path keeps one source of truth and preserves the invariant that reporting is derived at render time from the append-only store.
+
+**Implementation**: `src/storage/sessionStore.ts` (`deleteSession`), `src/extension.ts` (`lalog.deleteSession`; `lalog.editSession` now ends with `await refreshStatus()` instead of `panel.refresh()` so edits also refresh the "today" total), `src/ui/panelView.ts` (🗑 row button, `case 'delete'`), `package.json` (command contribution).
+
+**Future**: The whole-file rewrite is non-atomic — a crash mid-`writeFileSync` truncates `sessions.jsonl`. Writing `sessionsFile + '.tmp'` then `renameSync` (as `saveSnapshot` already does) would fix this for both `deleteSession` and `updateSession`; out of scope here, noted for a future hardening pass.
+
+**Test coverage**: `test/userStories/ui.test.ts` — US-4.7 (3 tests: confirmed delete with a stale duplicate line + auto-updating stats, cancel no-op, live/unknown/missing id not deletable).
+
+---
+
+## ADR-024: Hand-Rolled PDF Writer (Zero New Dependencies)
+
+**Status**: Accepted
+
+**Context**: PDF export is wanted for two audiences — personal examination and client abstract sheets. The repo's philosophy is minimal dependencies (the only runtime dependency is `diff`), and PDF libraries are heavy. A report writer also has to be testable without pulling a parser into the test suite.
+
+**Decision**:
+1. Own a ~250-line PDF 1.4 writer in `src/reporting/pdf.ts`: base-14 fonts only (Helvetica / Helvetica-Bold / Helvetica-Oblique with `/WinAnsiEncoding`), uncompressed content streams, no `/Info` dictionary (no `/CreationDate`, no `/Producer`) so output is **byte-deterministic**. Text escaping, latin-1 encoding, word wrap, and a correct 20-byte-per-entry xref table with a `startxref` offset live here.
+2. `pdfReport.ts` stays a pure layer mirroring ADR-015: `buildPdfModel()` takes `now` / `idleGapMs` as parameters and stamps them on the model, so `renderPdfReport()` never reaches for `Date.now()` internally and rendering is reproducible in tests.
+3. Options are 13 boolean content toggles plus `dayMode` (`grouped` | `separate`) and two presets (`personal` / `client`). Durations always render — a time report without durations is useless.
+4. Output goes to `reportsDir` using `saveReport`'s date-prefixed, non-overwriting filename with a `.pdf` extension, and is opened via `vscode.env.openExternal`.
+
+**Rationale**:
+- Dependency-free, and testable without a PDF parser: uncompressed streams make text assertions possible, and a `startxref` slice check proves the xref offsets without parsing the document.
+- Deterministic bytes let tests assert on rendered content instead of snapshots.
+- Presets keep the common cases one click away while the checkbox list keeps full control for the unusual ones.
+
+**Implementation**: `src/reporting/pdf.ts` (writer), `src/reporting/pdfReport.ts` (model, presets, options, render, save), `src/extension.ts` (`lalog.exportPdf`, sharing `pickReportRange` with `lalog.report`), `package.json` (command contribution).
+
+**Known limitation**: non-latin1 text is transliterated to `?` by the WinAnsi encoder.
+
+**Test coverage**: `test/userStories/pdfExport.test.ts` — US-6.6 / US-6.7 (7 tests: writer determinism, page-tree/xref structural validity, `buildPdfModel` day bucketing and scoping, the full command flow, the client vs personal presets, option overlay, and cancel/empty-selection handling).
 
 ---
 
