@@ -32,6 +32,11 @@
 - [ADR-022: Hard 1h Stale-Session Cutoff — No Continuation](#adr-022-hard-1h-stale-session-cutoff--no-continuation)
 - [ADR-023: Confirmed Session Deletion (Full-File Rewrite, No Fallback)](#adr-023-confirmed-session-deletion-full-file-rewrite-no-fallback)
 - [ADR-024: Hand-Rolled PDF Writer (Zero New Dependencies)](#adr-024-hand-rolled-pdf-writer-zero-new-dependencies)
+- [ADR-025: Session Detail as an Untitled Markdown Document](#adr-025-session-detail-as-an-untitled-markdown-document)
+- [ADR-026: Diffs-Only Technical Retention](#adr-026-diffs-only-technical-retention)
+- [ADR-027: One Local Day Key Everywhere](#adr-027-one-local-day-key-everywhere)
+- [ADR-028: Timeline Slots Carry Session Identity](#adr-028-timeline-slots-carry-session-identity)
+- [ADR-029: A Single Implicit Workspace Project; Multi-Project Is Opt-In](#adr-029-a-single-implicit-workspace-project-multi-project-is-opt-in)
 
 ---
 
@@ -54,7 +59,7 @@
 - Reports attribute sessions to the day they started (see [ADR-002](#adr-002-session-centric-reporting))
 - The `files_by_day.txt` export handles midnight-spanning sessions by listing files under both days if edits happened on both
 
-**Test coverage**: `test/stateMachine.test.ts` includes an "overnight session spanning midnight" test that verifies `startedAt` doesn't change across midnight.
+**Test coverage**: `test/userStories/tracking.test.ts` includes an "US-1.7 · overnight session is not day-bound" test that verifies `startedAt` doesn't change across midnight.
 
 ---
 
@@ -213,7 +218,7 @@ export function autoClose(m: Machine, now: number): { activeMinutes: number; end
 }
 ```
 
-**Test coverage**: `test/stateMachine.test.ts` includes an "autoClose uses lastActivityAt not detection time" test.
+**Test coverage**: `test/userStories/tracking.test.ts` includes an "US-1.2 · idle gap not counted; endedAt = lastActivityAt" test.
 
 ---
 
@@ -249,7 +254,7 @@ export function thresholdsMs(cfg: WorklogConfig): ThresholdsMs {
 - 210-minute wrap prompt → 210 seconds (3.5 minutes)
 - 2-hour auto-close → 2 minutes
 
-**Test coverage**: `test/stateMachine.test.ts` uses real thresholds (not scaled) to test the state machine in isolation.
+**Test coverage**: `test/userStories/tracking.test.ts` exercises the pure state-machine and span helpers (`updateActiveSpan`, `trimToCutoff`, `isStale`) in isolation using real thresholds (not scaled); `test/userStories/privacyConfig.test.ts` covers the scaling itself (US-8.6).
 
 ---
 
@@ -357,8 +362,9 @@ export function thresholdsMs(cfg: WorklogConfig): ThresholdsMs {
 - `Session.activityTs` capped at 20 000 entries to bound file size; older entries are dropped oldest-first (span classification then falls back to gap analysis for those spans individually).
 - Unit fix: `activeMinutes` is milliseconds end-to-end; all `* 60000` consumers (report, aggregate, sessions view, status bar, prompts, redact) corrected in the same change.
 
-**Test coverage**: `test/spans.test.ts` — span open/extend/close, in/outside classification, legacy reconstruction, confirmed-idle-outside, and a round-trip run.
+**Test coverage**: `test/userStories/tracking.test.ts` — span open/extend/close, in/outside classification, legacy reconstruction, confirmed-idle-outside, and a round-trip run.
 
+---
 
 ## ADR-013: Anonymous Sessions as a Conscious Choice
 
@@ -377,8 +383,9 @@ export function thresholdsMs(cfg: WorklogConfig): ThresholdsMs {
 
 **Implementation**: `src/core/types.ts` (`anonymous`), `src/core/sessionManager.ts` (`applyBackgroundWork`, guards in `checkProgress`/`presentDescribe`), `src/prompts/promptCoordinator.ts` + `describeFlow.ts` (describe-checkpoint `background` choice, wrap option hidden when anonymous), `src/ui/panelView.ts` (dimmed `○` state, "Keep as background work" row action), `src/extension.ts` (`lalog.background`).
 
-**Test coverage**: manual (panels/prompts not host-testable); pure helpers covered via `test/projects.test.ts`/`test/insights.test.ts` for reporting of anonymous sessions (`*(background work)*`).
+**Test coverage**: manual (panels/prompts not host-testable); pure helpers covered via `test/userStories/projects.test.ts`/`test/userStories/insightsReporting.test.ts` for reporting of anonymous sessions (`*(background work)*`).
 
+---
 
 ## ADR-014: Projects as a Derived Workspace Registry
 
@@ -398,8 +405,9 @@ export function thresholdsMs(cfg: WorklogConfig): ThresholdsMs {
 
 **Implementation**: `src/core/projects.ts` (pure `Project`, `resolveProject`, palette), `src/storage/projectRegistry.ts` (CRUD + atomic save), `src/ui/panelView.ts` (Projects tab, chips, assign picker, claim/archive actions), `src/reporting/report.ts` + `insights.ts` (scoping by `resolveProject`).
 
-**Test coverage**: `test/projects.test.ts` — derivation, archived exclusion, explicit-override precedence, color palette.
+**Test coverage**: `test/userStories/projects.test.ts` — derivation, archived exclusion, explicit-override precedence, color palette.
 
+---
 
 ## ADR-015: Insights as Pure Aggregations
 
@@ -419,7 +427,9 @@ export function thresholdsMs(cfg: WorklogConfig): ThresholdsMs {
 
 **Implementation**: `src/reporting/ranges.ts` (pure), `src/reporting/insights.ts` (aggregates + timeline + hourly log), `src/reporting/report.ts` (scoping, custom range, hourly log, filenames), `src/ui/panelView.ts` (Insights tab, timeline cells, period toggle), `src/extension.ts` (`lalog.report` rework, CSV export).
 
-**Test coverage**: `test/insights.test.ts` — effectiveMs tails/cap, per-range totals, per-project aggregation with explicit+derived mapping, vscode/outside split, 24-hour timeline, hourly breakdown, month boundaries.
+**Test coverage**: `test/userStories/insightsReporting.test.ts` — effectiveMs tails/cap, per-range totals, per-project aggregation with explicit+derived mapping, vscode/outside split, 24-hour timeline, hourly breakdown, month boundaries.
+
+---
 
 ## ADR-016: Describe Before Exit via Focus-Loss Prompt (removed)
 
@@ -439,6 +449,8 @@ export function thresholdsMs(cfg: WorklogConfig): ThresholdsMs {
 
 **Test coverage** (historical): `test/focusPrompt.test.ts` — guard matrix (describe-due, no session, cooldown, anonymous, existing description, non-due states).
 
+---
+
 ## ADR-017: Never Prompt About a Closed Session
 
 **Status**: Accepted
@@ -457,7 +469,7 @@ export function thresholdsMs(cfg: WorklogConfig): ThresholdsMs {
 
 **Test coverage**: typecheck + full suite (no runtime path change to pure modules).
 
-
+---
 
 ## ADR-018: Technical Detail Capture
 
@@ -481,7 +493,9 @@ export function thresholdsMs(cfg: WorklogConfig): ThresholdsMs {
 
 **Implementation**: `src/capture/diffCapture.ts`, `src/capture/terminalCapture.ts`, `src/capture/aiLog.ts`, `src/capture/redactText.ts` (pure modules), `src/storage/technicalStore.ts` (sidecar storage), `src/core/sessionManager.ts` (wiring), `src/opencode/service.ts` (AI interaction logging), `src/extension.ts` (service-to-manager wiring).
 
-**Test coverage**: `test/diffCapture.test.ts` (first-save newFile, subsequent patches, binary skip, redaction, cap, reset, LRU), `test/terminalCapture.test.ts` (stripAnsi, confidence mapping, duration, stdout absent/capped/redacted, clearInFlight), `test/aiLog.test.ts` (shape, truncated passthrough), `test/redactText.test.ts` (compile, invalid skip, case-insensitive global), `test/technicalStore.test.ts` (append+read round-trip, rotation, malformed skip, delete, pathFor shape).
+**Test coverage**: `test/userStories/capture.test.ts` — US-2.5 (first-save newFile, subsequent patches, binary skip, redaction, cap, reset, LRU), US-2.3/2.4 (stripAnsi, confidence mapping, duration, exit code, stdout absent/capped/redacted), US-2.6 (AI-log shape, truncated passthrough), and the sidecar append+read round-trip; `test/userStories/privacyConfig.test.ts` — US-8.3 (`redactText`: compile, invalid skip, case-insensitive global) and US-8.4/8.5 (append-only JSONL, snapshot cleanup on close, capture toggles). Sidecar deletion is covered with the session delete in `test/userStories/ui.test.ts` (ADR-023).
+
+---
 
 ## ADR-019: No Description Prompts on Close + Text-First Describe
 
@@ -500,6 +514,8 @@ export function thresholdsMs(cfg: WorklogConfig): ThresholdsMs {
 
 **Test coverage**: typecheck + full suite — the removed prompt paths had no pure-code unit tests, and the reorder keeps `DescribeResult`/`applyDescribeResult` shapes unchanged.
 
+---
+
 ## ADR-020: Remove the Describe-Before-Exit Prompt
 
 **Status**: Accepted
@@ -517,6 +533,8 @@ export function thresholdsMs(cfg: WorklogConfig): ThresholdsMs {
 
 **Test coverage**: typecheck + full suite — `focusPrompt.test.ts` removed with its module.
 
+---
+
 ## ADR-021: Remove the On-Start Description Prompt
 
 **Status**: Accepted
@@ -530,9 +548,9 @@ export function thresholdsMs(cfg: WorklogConfig): ThresholdsMs {
 
 **Rationale**: A prompt that fires minutes after opening VS Code interrupts the user before they've settled into work. The describe checkpoint at ~90 minutes provides context-rich description gathering without the interruption. The user prefers zero description prompts on open.
 
-**Implementation**: `src/core/config.ts` (removed fields + threshold), `src/prompts/promptCoordinator.ts` (removed `askSessionStart`, `StartPromptResult`), `src/core/sessionManager.ts` (removed constructor param, timer fields, four methods, all call sites), `src/extension.ts` (removed constructor arg), `package.json` (removed config contributions), `test/sessionStore.test.ts` + `test/stateMachine.test.ts` (removed `startDescAt` from threshold literals).
+**Implementation**: `src/core/config.ts` (removed fields + threshold), `src/prompts/promptCoordinator.ts` (removed `askSessionStart`, `StartPromptResult`), `src/core/sessionManager.ts` (removed constructor param, timer fields, four methods, all call sites), `src/extension.ts` (removed constructor arg), `package.json` (removed config contributions). The shared test harness derives every threshold centrally from `thresholdsMs(cfg)`, so dropping `startDescAt` needed no per-test edits.
 
-**Test coverage**: typecheck + full suite — no runtime path change to pure modules; `startDescAt` removed from test threshold literals to satisfy the type.
+**Test coverage**: typecheck + full suite — no runtime path change to pure modules, and the removed prompt path had no pure-code unit test of its own.
 
 ---
 
@@ -556,7 +574,7 @@ export function thresholdsMs(cfg: WorklogConfig): ThresholdsMs {
 
 **Implementation**: `src/core/config.ts` (`staleSessionAfterMinutes`, `staleAfter`, clamped `autoEndIdle`), `src/core/stateMachine.ts` (`isStale` pure predicate), `src/core/sessionManager.ts` (`checkStale`, heartbeat + `onActivityEvent` triggers, `checkIdle` guard), `package.json` (setting contribution, removed stale `lalog.resumeWindowMinutes`).
 
-**Test coverage**: `test/stateMachine.test.ts` — `isStale` boundary tests (null, exactly-at, just-under, past cutoff); `staleAfter` added to threshold literals in `test/stateMachine.test.ts` and `test/sessionStore.test.ts`.
+**Test coverage**: `test/userStories/tracking.test.ts` — US-1.4 (`isStale` boundary tests: null, exactly-at, just-under, past cutoff, plus `staleAfter` winning over `autoEndIdle` and the force-close starting a fresh session). Thresholds come from the harness's `thresholdsMs(cfg)`, so the new `staleAfter` gate applies to every test without per-test literals.
 
 ---
 
@@ -609,6 +627,134 @@ export function thresholdsMs(cfg: WorklogConfig): ThresholdsMs {
 **Known limitation**: non-latin1 text is transliterated to `?` by the WinAnsi encoder.
 
 **Test coverage**: `test/userStories/pdfExport.test.ts` — US-6.6 / US-6.7 (7 tests: writer determinism, page-tree/xref structural validity, `buildPdfModel` day bucketing and scoping, the full command flow, the client vs personal presets, option overlay, and cancel/empty-selection handling).
+
+---
+
+## ADR-025: Session Detail as an Untitled Markdown Document
+
+**Status**: Accepted
+
+**Context**: The sidebar used to render an inline, collapsible detail block per session — split times, type, closed reason, event counters, top files, notes, git. It was the only place that detail existed, it was a second rendering path to maintain alongside the markdown report, and it made the session list expensive to scan: a handful of expanded rows buried every other session. The user asked for the *document*, not the widget: open a session and read what happened, in full, with diffs.
+
+**Decision**:
+1. **One pure renderer** — `src/reporting/sessionDetail.ts` exports `renderSessionDetail(input): string`, which takes the session, the resolved project, the **raw** sidecar entries, the retention window, `now`, and `idleGapMs`. No I/O, no internal `Date.now()`, everything derived at render time (codemap invariant: no cached derived aggregates).
+2. **Multiple entry points, one document** — `lalog.sessionDetail <sessionId>` is the only command; the session-list row click posts `{ type: 'openSessionDetail', id }` and the panel forwards it. Later entry points (timeline slot, hour picker, day view) call the same command rather than adding a renderer.
+3. **Ephemeral untitled document, `preview: true`** — `openTextDocument({ language: 'markdown', content })` then `showTextDocument(doc, { preview: true })`. Nothing is written to disk, no file is added to the workspace, and closing the tab leaves no trace. The document is a *view* of the log, not an export.
+4. **Editing the document is scratch-only** — it does not write back. The editable surface for a session stays `lalog.editSession` (description) and the progress-update notes, both of which go through `SessionStore.updateSession`. A future "save as" is a separate decision; today the document is read-and-scratch.
+5. **The session list is simplified to a summary** — the entire inline `.detail` block, the `groupRow()` helper, and the `open.sessions` / `open.files` / `open.notes` sets are gone. A row is now: status icon, clickable project dot, time · workspace — description, duration, ✎ and 🗑. Below it, one always-visible timestamped row per progress-update note (oldest first), plus at most one conditional action row (un-background / keep-as-background). The row click opens the detail document.
+6. **`SessionSummary` in the `state` payload is unchanged** — the panel still derives and ships exactly the same fields. Simplifying the *rendering* must not change the payload other surfaces and tests depend on.
+
+**Rationale**:
+- One renderer means the sidebar and the document can never disagree about what a session contains, and adding a new entry point costs a click handler, not a second implementation.
+- An untitled preview document respects the local-first philosophy: viewing history creates no artifacts, and the markdown is the same thing the report already produces.
+- Keeping derivation at render time (ADR-015) is what makes the document safe to re-derive every time it is opened — nothing can drift from `sessions.jsonl`.
+- The list shrank to what a scan actually needs. Everything else is one click away, and the notes stay visible because they are the only part of a session that is written *by the user* and therefore worth scanning for.
+
+**Implementation**: `src/reporting/sessionDetail.ts` (`renderSessionDetail`, `fmtHM`, `diffRetentionView`, `DIFF_PREVIEW_CHARS`), `src/extension.ts` (`lalog.sessionDetail` — exact-id lookup, no fallback, per ADR-023), `src/ui/panelView.ts` (`case 'openSessionDetail'`, reworked `sessionNode()`, `.updates` container), `package.json` (command contribution), `test/helpers/mockVscode.ts` (`_openedDocs` / `_shownDocs` recording, object-form `openTextDocument`).
+
+**Test coverage**: `test/userStories/sessionDetail.test.ts` — US-4.4 (section-by-section rendering, empty-technical, the four `diffRetentionView` branches, the `DIFF_PREVIEW_CHARS` cap, and the key property that terminal entries still render next to an aged-out File-changes note) and US-4.8 (row click → document; unknown id → no document).
+
+---
+
+## ADR-026: Diffs-Only Technical Retention
+
+**Status**: Accepted
+
+**Context**: File diffs are the only unbounded growth in `~/.lalog/technical/` — they embed whole file contents, capped at 16 KB each but written on every save, forever. Terminal commands and AI-interaction metadata are tiny and are the parts of a session that stay *readable* long after you no longer care about the exact bytes of a line. A blanket age-out would throw both away together.
+
+**Decision**:
+1. **Only `type:'diff'` entries expire**, keyed on **each entry's own `ts`** — not on the session's `startedAt`. A long-running session that is still being written to never loses its recent diffs just because it started weeks ago.
+2. **`lalog.diffRetentionDays` (default 14, `0` = keep forever)** prunes the window. The sweep runs once at activation, right after `manager.start()`.
+3. **Terminal and AI-interaction entries are kept forever.** They are the durable record of *what you ran and how much you prompted*; the diffs are the disposable part.
+4. **Per-file atomic rewrite** — read the sidecar, filter, write `<file>.tmp`, `renameSync` over the original (the same pattern as `saveSnapshot`, `store.ts:86-91`). A re-stat guard (`size` + `mtimeMs`) between the read and the rename skips any file that was appended to mid-sweep, so a concurrent capture can never lose entries. A crash before the rename leaves the original intact plus a stray `.tmp`, which the next sweep cleans up first; a crash after it means the new content is live. There is no window in which a sidecar is partially written.
+5. **A sidecar left with zero entries is deleted**; files that do not match the sidecar pattern are never read, stat'ed, or rewritten. Malformed lines are kept **verbatim** — a hand-edited or half-written line is not something the sweep is allowed to "clean up".
+6. **Best-effort, per file** — any error is swallowed; a prune failure must never break activation.
+7. **Aged-out signalling is diff-specific** (`diffRetentionView` in `reporting/sessionDetail.ts`): the document shows the captured diffs while any of them are inside the window; when diffs exist but all are older, or when the sweep already removed them and the session is older than the window with `events.saves > 0`, it renders an explicit "no longer available" note *instead of* an empty section. The `saves > 0` guard prevents a false positive on an old read-only session that never produced a diff to begin with. Terminal and AI sections render unconditionally, so a document can legitimately show a terminal command and an aged-out File-changes note side by side.
+8. **Rejected: per-session-age pruning** (`pruneBefore(cutoffStartedAt, keepIds)`) — it couples data removal to when a session *began*, silently drops diffs from long sessions that are still in use, and needs a `keepIds` escape hatch that is only ever populated by callers who happen to think about it.
+
+**Rationale**:
+- Diff content is the only part that meaningfully duplicates the workspace itself; once it is gone the *shape* of the work (files touched, commands run, prompts sent) is still answerable from the counters and the retained metadata.
+- Rewriting files at all is the risky part, so it is made atomic and guarded; the cheap alternative (deleting whole sidecars) would have cost the terminal and AI record.
+- Showing "no longer available" is honest. Silently rendering an empty *File changes* section would be indistinguishable from a session where diff capture was off.
+
+**Implementation**: `src/storage/technicalStore.ts` (`pruneDiffEntriesBefore`, `SIDECAR_RE`), `src/core/config.ts` + `package.json` (`lalog.diffRetentionDays`), `src/extension.ts` (activation sweep; `lalog.sessionDetail` passes `retentionDays`), `src/reporting/sessionDetail.ts` (`diffRetentionView`).
+
+**Test coverage**: `test/userStories/capture.test.ts` — US-8.7 (5 pure tests: mixed sidecar keeps old terminal/AI, all-old-diff sidecar deleted, terminal/AI-only sidecar byte-identical with no rewrite, non-sidecar filenames untouched, malformed line preserved verbatim); `test/userStories/privacyConfig.test.ts` — US-8.7 (activation sweep, `diffRetentionDays: 0`, default of 14); `test/userStories/sessionDetail.test.ts` — US-8.7 (command honours the window / retention off).
+
+---
+
+## ADR-027: One Local Day Key Everywhere
+
+**Status**: Accepted
+
+**Context**: LaLog groups things by day in several places — the Sessions tab, the insights day totals and timeline, `files_by_day.txt`, the markdown report header, the PDF day sections, and the CSV filename. That used to be **five or six independent implementations** of "which day is this timestamp on", and three of them were **UTC** while the rest were local. For a session started at 23:30 the Sessions tab filed it under tomorrow, insights filed it under today, and the two disagreed on screen. The user experiences days in local time; `toISOString().slice(0, 10)` is a UTC day and was simply wrong.
+
+**Decision**:
+1. **One definition, in `src/reporting/ranges.ts`** — `dayKey(ts)` returns a zero-padded local `YYYY-MM-DD`. `ranges.ts` already owns every local calendar-day computation (`rangeStart`, `rangeEnd`, `calendarDaysAfter`) and is already imported by the consumers that need a day, so it is the natural home. Rejected: a new one-function `days.ts` module; exporting from `insights.ts` (which would make `report` / `pdfReport` / `panelView` / `legacyExport` import "up" for a date primitive).
+2. **Zero-padded** so lexicographic sort === chronological sort — every consumer sorts day strings.
+3. **Fix the three UTC sites**: `panelView.ts` `groupByDay` (the Sessions tab), and both `legacyExport` day keys in `files_by_day.txt`.
+4. **Consolidate the five local duplicates**: delete the local `dayKey` in `insights.ts`, the `dayStamp` helper in `extension.ts`, and `localDayKey` in `pdfReport.ts`; make `report.ts`'s exported `localStamp` a one-line delegation to `dayKey` (it is part of that module's surface, used by `pdfReport` and `saveReport`).
+5. **Deliberately left alone** — `rangeStart`/`rangeEnd` and `calendarDayCount` (already local, DST-safe); `aggregate.ts`'s `todayActiveMs`/`todayUntrackedMs`; `extension.ts`'s `parseDay` (the inverse of `dayKey`); `insights.ts`'s `localHourStart`/`dayStartMs`/`hourlyBreakdown` (an hour grid, not day keys); the full-ISO `iso()` helpers in `git.ts`/`extension.ts`; the `store.ts` session-id prefix (id generation, not grouping).
+6. **No range-membership change** — the range bounds were already local, so this only changes *which day string* a session files under. No session enters or leaves an insights range because of it.
+
+**Rationale**:
+- One definition means the Sessions tab, the insights timeline, and the day exports cannot drift apart again. A late-evening session is the case that actually bites, and it is now covered by a test.
+- `ranges.ts` sits below every consumer in the dependency graph, so the import direction stays clean.
+- The `YYYY-MM-DD` output format is unchanged everywhere, including `files_by_day.txt` — downstream consumers of the legacy format keep working.
+
+**Implementation**: `src/reporting/ranges.ts` (`dayKey`), `src/ui/panelView.ts`, `src/integrations/legacyExport.ts`, `src/reporting/insights.ts`, `src/reporting/report.ts`, `src/reporting/pdfReport.ts`, `src/extension.ts`.
+
+**Test coverage**: `test/userStories/ui.test.ts` — US-4.3 (TZ-independent local fixtures, plus a 23:30 session asserting the Sessions tab group, the insights timeline day, and the insights day totals all agree); `test/userStories/insightsReporting.test.ts` — US-6.5 (`files_by_day.txt` keys a 23:30 edit under its local day).
+
+---
+
+## ADR-028: Timeline Slots Carry Session Identity
+
+**Status**: Accepted
+
+**Context**: The insights timeline showed, per hour, only *how much* time was spent and which project dominated the hour. That is enough to see shape, but not to act on it: the panel's "where did this hour go?" question had no answer, and the only route to a session was the Sessions tab, which is grouped by day, not by hour. The 0.6.0 timeline also merged the old "Time per day" list into the day rows, so a day's total now sits on the same row as its hours — which makes the row, rather than a separate widget, the obvious place to hang a day's file diffs (US-6.9).
+
+**Decision**:
+1. **`HourCell.parts: HourPart[]`** — one `HourPart` (`{ ms, projectName, sessionIds }`) per project present in that hour. The cell-level `ms` / `projectName` / `color` fields stay, unchanged, as the dominant slice, so every existing consumer (tooltips, tests, the day total) keeps working.
+2. **Identity, not just magnitude.** `sessionIds` is what makes the slot actionable: the webview posts `{ type: 'openHourSessions', ids }`, the extension opens the session detail directly when the hour holds one session, and shows a QuickPick when it holds several. One slot → one click → one document.
+3. **Client-side filtering, not a server round-trip.** The project filter chips filter the already-posted `parts`, re-rendering the grid and the day totals in the webview. A `pushState` re-derives all three insight snapshots, so filtering must not add a message or widen the payload (ADR-015: render-time aggregation, no cached derived aggregates).
+4. **An hour axis** (00:00, 03:00 … 21:00) and a per-day total on each row, replacing the separate "Time per day" section that duplicated numbers the timeline already implied.
+5. **Empty cells are explicitly empty** (`ms: 0`, transparent, `parts: []`) rather than omitted, so the grid is always a full day wide and hour *n* is always `cells[n]`.
+6. **Colour comes from `byProject`**, not from the cell, so the timeline palette and the project legend (and the sessions-tab chips) cannot disagree.
+
+**Rationale**:
+- Aggregating into `parts` at render time — where the timeline is already built — costs one pass and no new state, and it keeps the shape of the data ("which sessions were active in this hour") available to any future consumer, not just to this one click.
+- Hover tooltip + click target per cell, with the day label itself opening that day's diffs, means every number the timeline shows is now either explained or navigable.
+
+**Implementation**: `src/reporting/insights.ts` (`HourPart`, `HourCell.parts`, `buildTimeline`), `src/ui/panelView.ts` (`renderInsights`, `tlFilter` state, `openHourSessions` / `openDayDiffs` handlers, `.tlval` / `.tlaxis`).
+
+**Test coverage**: `test/userStories/insightsReporting.test.ts` — US-6.8 (5 pure tests: per-project slices, deduplicated `sessionIds` across overlapping sessions, empty cells, dominant-slice compatibility, and parts agreeing with `byProject`); `test/userStories/ui.test.ts` — US-6.8 (timeline cells reach the session id; a single-slot click opens the document and a multi-slot click offers a picker, with unresolvable ids doing neither).
+
+---
+
+## ADR-029: A Single Implicit Workspace Project; Multi-Project Is Opt-In
+
+**Status**: Accepted
+
+**Context**: Projects were a full management surface (create / claim / archive) that nobody had asked for, and the derived model had a sharp edge. `resolveProject` matches `session.workspaceKey` against a project's claims with **no basename fallback**, so renaming or moving the folder you work in produces a *new* workspace key: every historical session silently stops resolving, and — because the common case is "two folders, two projects, one of them historical" — a naive auto-create claiming only the *current* key would orphan the history. The user hit exactly this: `worklog` held the history, the folder is now `lalog`, and both appeared in the panel.
+
+**Decision**:
+1. **One project per window by default**, named after the open folder, renameable, created automatically. `lalog.multiProject: false`.
+2. **The claim union is the actual fix**, not the auto-create. On every activation (when multi-project is off) the single project claims the current workspace key **and** every `workspaceKey` found in `sessions.jsonl`. After that, a historical session resolves by claim, a session whose explicit `projectId` was collapsed away is re-pointed, a new session resolves by the current key, and a *future* folder rename simply adds one more key to the same project.
+3. **Collapse, not delete.** More than one project → a survivor is chosen (folder-name match, else oldest non-archived, else oldest), every other project's `workspaceKeys` and `pathHints` are unioned into it, and the rest are removed. The survivor keeps its own `id`, `color` and `createdAt`.
+4. **Data-preserving and idempotent.** `projects.json.pre-collapse.bak` is written once (only if absent) so the earliest pre-collapse state survives; explicit `projectId`s pointing at removed projects are rewritten via `updateSession`; the `projects.json` schema is unchanged (no version marker) and every branch of `ensureSingleProject` is safe to re-run on the next activation.
+5. **Never auto-rename.** With exactly one project, the name is user-owned: a folder rename must not silently relabel a project the user called "Client X".
+6. **The Projects tab shrinks to match.** Default mode renders one card (dot, name, stats) and a **Rename…** action. Create/claim/archive stay behind `lalog.multiProject`, and the `newProject` / `newProjectFromWorkspace` / `claimWorkspace` / `archiveProject` messages are gated off. Renaming is deliberately *not* gated — it is the one project action the default mode needs. Project names still flow through `resolveProject` / `resolveProjectName` at render time, so a rename shows up in the panel, the reports, the PDF and the CSV on the next refresh with no extra wiring.
+7. **Opt-in multi-project keeps the old ambiguity.** With `lalog.multiProject` on, nothing is collapsed and a workspace claimed by several projects still resolves to the first match; "Add workspace" is the manual remedy. Known limitation, not a bug to fix later.
+
+**Rationale**:
+- The rename-orphaning bug is structural, so the fix is structural: a claim set that grows instead of a lookup that guesses. Nothing downstream of `resolveProject` changes.
+- Naming the project after the folder makes the model legible ("this project is this workspace") and makes the *rename* action meaningful instead of decorative.
+- The migration is cheap (a handful of key unions, once) and re-runnable, which is what makes it safe to run on every activation rather than behind a one-shot prompt.
+
+**Implementation**: `src/storage/projectRegistry.ts` (`EnsureSingleOpts`, `EnsureSingleResult`, `ensureSingleProject`), `src/extension.ts` (activation migration between `manager.start()` and the first `refreshStatus()`, `lalog.renameProject`), `src/core/config.ts` + `package.json` (`lalog.multiProject`), `src/ui/panelView.ts` (`PanelNow.multiProject`, payload flag, gated handlers, `renderProjects` branch).
+
+**Test coverage**: `test/userStories/projects.test.ts` — US-5.5 (registry: create-from-empty, one-project claim/restore with the name untouched, name-match survivor + backup, oldest-live survivor, idempotency across three calls; activation: the rename round-trip with a pre-seeded `worklog`/`lalog` registry and a pre-seeded `sessions.jsonl`, asserting one project named `lalog` claiming both keys, the two-project backup, the re-pointed session, the resolution of the old-key session, and the panel payload; and the gated Projects tab); US-5.6 (`lalog.multiProject: true` keeps both projects, writes no backup, reports the flag, and still allows `newProjectFromWorkspace`).
 
 ---
 

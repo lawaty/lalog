@@ -22,7 +22,8 @@ import {
   resolvePdfOptions,
   savePdfReport,
 } from './reporting/pdfReport';
-import { ReportRange, rangeStart, rangeEnd, rangeLabel } from './reporting/ranges';
+import { ReportRange, rangeStart, rangeEnd, rangeLabel, dayKey } from './reporting/ranges';
+import { renderDayDiffs, renderSessionDetail } from './reporting/sessionDetail';
 import { exportFilesByDay } from './integrations/legacyExport';
 import { LaLogAiService, OpencodePreflightError } from './opencode/service';
 import type { AnalysisResult } from './opencode/service';
@@ -31,7 +32,7 @@ import { resolveProject } from './core/projects';
 
 let manager: SessionManager;
 
-export function activate(context: vscode.ExtensionContext): void {
+export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const cfg = readConfig();
   const paths: LaLogPaths = buildPaths(cfg.dataDir);
   ensureDirs(paths);
@@ -108,6 +109,7 @@ export function activate(context: vscode.ExtensionContext): void {
         wsKey: p ? workspaceKey(p) : 'no-workspace',
         wsName: p ? workspaceName(p) : 'No folder',
         wsPath: p,
+        multiProject: cfg.multiProject,
       };
     },
     store,
@@ -396,7 +398,7 @@ export function activate(context: vscode.ExtensionContext): void {
       }),
     ];
     const content = rows.map((r) => '"' + r.join('","') + '"').join('\n');
-    const file = path.join(paths.exportsDir, `sessions-${dayStamp(Date.now())}.csv`);
+    const file = path.join(paths.exportsDir, `sessions-${dayKey(Date.now())}.csv`);
     fs.writeFileSync(file, content);
     const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(file));
     await vscode.window.showTextDocument(doc, { preview: true });
@@ -505,12 +507,86 @@ export function activate(context: vscode.ExtensionContext): void {
     await refreshStatus();
   });
 
+  registerCommand('lalog.sessionDetail', async (id: unknown) => {
+    const sid = typeof id === 'string' ? id : undefined;
+    if (!sid) return;
+    const all = await store.loadAll();
+    const active = manager.getSession();
+    const target = all.find((s) => s.id === sid) ?? (active && active.id === sid ? active : undefined);
+    if (!target) {
+      vscode.window.showInformationMessage('Session not found.');
+      return;
+    }
+    const projects = projectRegistry.list();
+    const md = renderSessionDetail({
+      session: target,
+      project: resolveProject(target, projects),
+      technical: technicalStore.read(target.id), // RAW — never filtered by retention
+      retentionDays: cfg.diffRetentionDays > 0 ? cfg.diffRetentionDays : null,
+      now: Date.now(),
+      idleGapMs: th.idleGap,
+    });
+    const doc = await vscode.workspace.openTextDocument({ language: 'markdown', content: md });
+    await vscode.window.showTextDocument(doc, { preview: true });
+  });
+
+  registerCommand('lalog.dayDiffs', async (day: unknown) => {
+    const all = await store.loadAll();
+    const days = [...new Set(all.map((s) => dayKey(s.startedAt)))].sort().reverse().slice(0, 31);
+    if (!days.length) {
+      vscode.window.showInformationMessage('No sessions recorded yet.');
+      return;
+    }
+    let pick = typeof day === 'string' && days.includes(day) ? day : undefined;
+    if (!pick) {
+      const choice = await vscode.window.showQuickPick(
+        days.map((d) => ({ label: d, id: d })),
+        { title: 'File diffs for day', placeHolder: 'Choose a day' }
+      );
+      if (!choice) return;
+      pick = choice.id;
+    }
+    const daySessions = all
+      .filter((s) => dayKey(s.startedAt) === pick)
+      .sort((a, b) => a.startedAt - b.startedAt);
+    const md = renderDayDiffs({
+      day: pick,
+      sessions: daySessions.map((s) => ({ session: s, technical: technicalStore.read(s.id) })),
+      retentionDays: cfg.diffRetentionDays > 0 ? cfg.diffRetentionDays : null,
+      now: Date.now(),
+    });
+    const doc = await vscode.workspace.openTextDocument({ language: 'markdown', content: md });
+    await vscode.window.showTextDocument(doc, { preview: true });
+  });
+
   registerCommand('lalog.exportFilesByDay', async () => {
     const all = await store.loadAll();
     const files = await exportFilesByDay(paths, all);
     vscode.window.showInformationMessage(
       files.length ? `Exported ${files.length} day-file(s).` : 'Nothing to export yet.'
     );
+  });
+
+  // Rename the implicit project. The new name is picked up everywhere on the
+  // next refresh: project names always resolve at render time, never cached.
+  registerCommand('lalog.renameProject', async (id: unknown) => {
+    const list = projectRegistry.list();
+    const target =
+      (typeof id === 'string' ? list.find((p) => p.id === id) : undefined) ??
+      list.find((p) => !p.archivedAt) ??
+      list[0];
+    if (!target) {
+      vscode.window.showInformationMessage('No project to rename.');
+      return;
+    }
+    const name = await vscode.window.showInputBox({
+      title: 'Rename project',
+      value: target.name,
+      ignoreFocusOut: true,
+    });
+    if (!name?.trim() || name.trim() === target.name) return;
+    projectRegistry.rename(target.id, name.trim());
+    await refreshStatus();
   });
 
   // Sidebar panel: sessions list + fixed "Now" box at the bottom (single
@@ -533,6 +609,39 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   manager.start();
+
+  // Single implicit workspace project (ADR-029). The registry collapse is a
+  // synchronous file rewrite, so no render ever sees a half-written projects.json;
+  // a transient earlier panel push may still show the pre-migration registry until
+  // the next refresh, which is harmless and self-correcting. Idempotent: safe on
+  // every activation.
+  if (!cfg.multiProject) {
+    const folder = vscode.workspace.workspaceFolders?.[0];
+    if (folder) {
+      const wsPath = folder.uri.fsPath;
+      const history = await store.loadAll();
+      const res = projectRegistry.ensureSingleProject({
+        wsKey: workspaceKey(wsPath),
+        wsPath,
+        fallbackName: workspaceName(wsPath),
+        historyKeys: [...new Set(history.map((s) => s.workspaceKey))],
+      });
+      const known = new Set(projectRegistry.list().map((p) => p.id));
+      for (const s of history) {
+        if (s.projectId && !known.has(s.projectId)) {
+          await store.updateSession(s.id, { projectId: res.project.id });
+        }
+      }
+      const live = manager.getSession();
+      if (live?.projectId && !known.has(live.projectId)) manager.assignProject(res.project.id);
+    }
+  }
+
+  // Diffs-only retention sweep: terminal and AI metadata are kept forever.
+  if (cfg.diffRetentionDays > 0) {
+    technicalStore.pruneDiffEntriesBefore(Date.now() - cfg.diffRetentionDays * 86_400_000);
+  }
+
   void refreshStatus();
 
   // One-time onboarding hosted in the side panel.
@@ -595,7 +704,7 @@ async function pickReportRange(
   const input = await vscode.window.showInputBox({
     title: 'Custom report range',
     placeHolder: 'YYYY-MM-DD...YYYY-MM-DD (max 31 days)',
-    value: `${dayStamp(Date.now())}...${dayStamp(Date.now())}`,
+    value: `${dayKey(Date.now())}...${dayKey(Date.now())}`,
     ignoreFocusOut: true,
   });
   const m = input?.trim().match(/^(\d{4}-\d{2}-\d{2})\D+(\d{4}-\d{2}-\d{2})$/);
@@ -626,12 +735,6 @@ async function pickReportRange(
       ).getTime(),
     },
   };
-}
-
-function dayStamp(t: number): string {
-  const d = new Date(t);
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
 function parseDay(s: string): number {

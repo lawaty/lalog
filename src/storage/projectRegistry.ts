@@ -11,6 +11,22 @@ interface ProjectFile {
 
 const VERSION = 1;
 
+/** Inputs for {@link ProjectRegistry.ensureSingleProject}. */
+export interface EnsureSingleOpts {
+  wsKey: string;
+  wsPath: string;
+  /** Basename of the current folder, e.g. 'lalog'. */
+  fallbackName: string;
+  /** Every workspaceKey ever seen in sessions.jsonl. */
+  historyKeys: string[];
+}
+
+export interface EnsureSingleResult {
+  project: Project;
+  /** Project ids removed by a collapse (empty when nothing was collapsed). */
+  droppedIds: string[];
+}
+
 /**
  * The projects registry: a curated config file (`~/.lalog/projects.json`),
  * separate from the append-only `sessions.jsonl`. Written atomically via
@@ -96,5 +112,76 @@ export class ProjectRegistry {
     if (archived) p.archivedAt = Date.now();
     else delete p.archivedAt;
     this.save();
+  }
+
+  /**
+   * Single-project model (`lalog.multiProject = false`, ADR-029). One project
+   * per window, named after the open folder and renameable, claiming the current
+   * workspace key *and* every key in session history — which is what structurally
+   * prevents a folder rename from orphaning history (`resolveProject` matches keys
+   * only, with no basename fallback). Idempotent in every branch.
+   *
+   *  - 0 projects → create one named `fallbackName` claiming wsKey/wsPath + history
+   *  - 1 project → un-archive it and claim wsKey + every history key; never renamed
+   *  - 2+ → keep a survivor (name match, else oldest non-archived, else oldest),
+   *    back up the pre-collapse file once, union every claim into the survivor
+   */
+  ensureSingleProject(opts: EnsureSingleOpts): EnsureSingleResult {
+    const { wsKey, wsPath, fallbackName } = opts;
+    const history = opts.historyKeys.filter((k) => !!k);
+
+    const claim = (p: Project): void => {
+      for (const k of [wsKey, ...history]) {
+        if (!p.workspaceKeys.includes(k)) p.workspaceKeys.push(k);
+      }
+      if (wsPath && !p.pathHints.includes(wsPath)) p.pathHints.push(wsPath);
+    };
+
+    if (this.projects.length === 0) {
+      const project = this.create({ name: fallbackName, workspaceKey: wsKey, pathHint: wsPath });
+      claim(project);
+      this.save();
+      return { project, droppedIds: [] };
+    }
+
+    if (this.projects.length === 1) {
+      const project = this.projects[0];
+      if (project.archivedAt) delete project.archivedAt;
+      claim(project);
+      this.save();
+      return { project, droppedIds: [] };
+    }
+
+    const survivor =
+      this.projects.find((p) => p.name === fallbackName) ??
+      [...this.projects].sort((a, b) => {
+        const aLive = a.archivedAt ? 1 : 0;
+        const bLive = b.archivedAt ? 1 : 0;
+        if (aLive !== bLive) return aLive - bLive;
+        return a.createdAt - b.createdAt;
+      })[0];
+
+    // Back up the original multi-project file exactly once so the earliest
+    // pre-collapse state survives later activations.
+    const file = this.file();
+    const bak = file + '.pre-collapse.bak';
+    if (!fs.existsSync(bak)) fs.copyFileSync(file, bak);
+
+    for (const p of this.projects) {
+      if (p.id === survivor.id) continue;
+      for (const k of p.workspaceKeys) {
+        if (!survivor.workspaceKeys.includes(k)) survivor.workspaceKeys.push(k);
+      }
+      for (const h of p.pathHints) {
+        if (!survivor.pathHints.includes(h)) survivor.pathHints.push(h);
+      }
+    }
+    claim(survivor);
+    if (survivor.archivedAt) delete survivor.archivedAt;
+
+    const droppedIds = this.projects.filter((p) => p.id !== survivor.id).map((p) => p.id);
+    this.projects = [survivor];
+    this.save();
+    return { project: survivor, droppedIds };
   }
 }

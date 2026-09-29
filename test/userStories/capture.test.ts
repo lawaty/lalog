@@ -1,11 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { setupHarness, createHarness } from '../helpers/harness';
 import { mockVscode } from '../helpers/mockVscode';
 import { TechnicalStore } from '../../src/storage/technicalStore';
 import { stripAnsi, TerminalCapture } from '../../src/capture/terminalCapture';
 import { DiffCapture } from '../../src/capture/diffCapture';
 import { AiLog } from '../../src/capture/aiLog';
+import type { TechnicalEntry } from '../../src/core/types';
 
 test('US-2.1 · all event kinds recorded with timestamps', async (t) => {
   const h = setupHarness(t);
@@ -286,4 +290,107 @@ test('US-2.6 · AI interaction metadata shape (never text)', () => {
   assert.equal(entry.responseChars, 50);
   assert.equal(entry.truncated, false);
   assert.ok(entry.ts > 0);
+});
+
+// ---- US-8.7 · diffs-only retention (ADR-026) ----
+
+const SID = '20260102-0900-abcd-ef01';
+const OLD_TS = Date.parse('2026-01-02T10:00:00');
+const NEW_TS = Date.parse('2026-01-10T10:00:00');
+
+function retentionDir(): string {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'lalog-retain-'));
+}
+
+function sidecar(dir: string, id: string, entries: unknown[]): string {
+  const file = path.join(dir, id + '.jsonl');
+  fs.writeFileSync(file, entries.map((e) => (typeof e === 'string' ? e : JSON.stringify(e))).join('\n') + '\n');
+  return file;
+}
+
+function diffAt(ts: number): TechnicalEntry {
+  return {
+    type: 'diff',
+    ts,
+    path: '/ws/a.ts',
+    diff: '--- a\n+++ b\n+x',
+    linesAdded: 1,
+    linesRemoved: 0,
+    newFile: false,
+  };
+}
+
+const oldTerminal: TechnicalEntry = {
+  type: 'terminal',
+  ts: OLD_TS,
+  commandLine: 'npm test',
+  exitCode: 0,
+  durationMs: 1000,
+  confidence: 'high',
+};
+
+const oldAi: TechnicalEntry = {
+  type: 'ai',
+  ts: OLD_TS,
+  task: 'describe',
+  model: 'm',
+  latencyMs: 100,
+  promptChars: 10,
+  responseChars: 5,
+  truncated: false,
+};
+
+test('US-8.7 · prune drops old diffs and keeps old terminal/AI entries', () => {
+  const dir = retentionDir();
+  const file = sidecar(dir, SID, [diffAt(OLD_TS), diffAt(NEW_TS), oldTerminal, oldAi]);
+  const store = new TechnicalStore(dir);
+  const removed = store.pruneDiffEntriesBefore(NEW_TS);
+  assert.equal(removed, 1);
+  const entries = store.read(SID);
+  assert.deepEqual(entries.map((e) => e.type), ['diff', 'terminal', 'ai']);
+  assert.equal((entries[0] as any).ts, NEW_TS, 'the new diff survived');
+  assert.ok(!fs.readdirSync(dir).some((f) => f.endsWith('.tmp')), 'no .tmp left behind');
+  assert.ok(fs.existsSync(file), 'sidecar with surviving entries is kept');
+});
+
+test('US-8.7 · a sidecar left with zero entries is deleted', () => {
+  const dir = retentionDir();
+  const file = sidecar(dir, SID, [diffAt(OLD_TS), diffAt(OLD_TS - 1000)]);
+  const store = new TechnicalStore(dir);
+  assert.equal(store.pruneDiffEntriesBefore(NEW_TS), 2);
+  assert.equal(fs.existsSync(file), false, 'empty sidecar removed');
+  assert.deepEqual(store.read(SID), []);
+});
+
+test('US-8.7 · a terminal/AI-only sidecar is left byte-identical (no rewrite)', () => {
+  const dir = retentionDir();
+  const file = sidecar(dir, SID, [oldTerminal, oldAi]);
+  const before = fs.readFileSync(file);
+  const store = new TechnicalStore(dir);
+  assert.equal(store.pruneDiffEntriesBefore(NEW_TS), 0);
+  assert.deepEqual(fs.readFileSync(file), before, 'file not rewritten');
+  assert.equal(store.read(SID).length, 2);
+});
+
+test('US-8.7 · files that are not sidecars are never touched', () => {
+  const dir = retentionDir();
+  const notes = path.join(dir, 'notes.txt');
+  const junk = path.join(dir, 'junk.jsonl');
+  fs.writeFileSync(notes, JSON.stringify(diffAt(OLD_TS)) + '\n');
+  fs.writeFileSync(junk, JSON.stringify(diffAt(OLD_TS)) + '\n');
+  const store = new TechnicalStore(dir);
+  assert.equal(store.pruneDiffEntriesBefore(NEW_TS), 0);
+  assert.equal(fs.readFileSync(notes, 'utf8'), JSON.stringify(diffAt(OLD_TS)) + '\n');
+  assert.equal(fs.readFileSync(junk, 'utf8'), JSON.stringify(diffAt(OLD_TS)) + '\n');
+});
+
+test('US-8.7 · malformed lines are preserved verbatim', () => {
+  const dir = retentionDir();
+  const broken = '{not json at all';
+  const file = sidecar(dir, SID, [diffAt(OLD_TS), broken, oldTerminal]);
+  const store = new TechnicalStore(dir);
+  assert.equal(store.pruneDiffEntriesBefore(NEW_TS), 1);
+  const raw = fs.readFileSync(file, 'utf8').split('\n');
+  assert.deepEqual(raw.slice(0, 2), [broken, JSON.stringify(oldTerminal)]);
+  assert.equal(store.read(SID).length, 1, 'read() still skips the malformed line');
 });

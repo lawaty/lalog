@@ -37,6 +37,7 @@ export function defaultConfig(overrides: Partial<LaLogConfig> = {}): LaLogConfig
     captureAiLog: false,
     maxDiffChars: 16000,
     maxStdoutChars: 32000,
+    diffRetentionDays: 14,
     ...overrides,
   };
 }
@@ -232,10 +233,17 @@ export function mockWebviewView() {
 
 export async function activateExtension(
   t: TestContext,
-  opts: { config?: Partial<LaLogConfig>; ai?: Partial<AiConfig> } = {}
-): Promise<{ ctx: any; paths: LaLogPaths; th: ThresholdsMs }> {
+  opts: {
+    config?: Partial<LaLogConfig>;
+    ai?: Partial<AiConfig>;
+    /** Pre-existing data dir (for pre-seeded projects.json / sessions.jsonl). */
+    dir?: string;
+    /** Workspace folder to report; defaults to `<dir>/workspace`. */
+    wsPath?: string;
+  } = {}
+): Promise<{ ctx: any; paths: LaLogPaths; th: ThresholdsMs; dir: string; wsPath: string }> {
   const cfg = defaultConfig(opts.config);
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lalog-ext-'));
+  const dir = opts.dir ?? fs.mkdtempSync(path.join(os.tmpdir(), 'lalog-ext-'));
   cfg.dataDir = dir;
   mockVscode.setConfig('lalog', cfg);
   mockVscode.setConfig('lalog.ai', {
@@ -247,7 +255,7 @@ export async function activateExtension(
     sendCommitSubjects: true,
     ...opts.ai,
   });
-  const wsPath = path.join(dir, 'workspace');
+  const wsPath = opts.wsPath ?? path.join(dir, 'workspace');
   fs.mkdirSync(wsPath, { recursive: true });
   mockVscode.setWorkspaceFolders([wsPath]);
   const ctx = {
@@ -255,15 +263,20 @@ export async function activateExtension(
     globalState: { get: () => undefined, update: async () => undefined },
   };
   const { activate } = await import('../../src/extension');
-  activate(ctx as any);
+  await activate(ctx as any);
   await flush();
-  return { ctx, paths: buildPaths(dir), th: thresholdsMs(cfg) };
+  return { ctx, paths: buildPaths(dir), th: thresholdsMs(cfg), dir, wsPath };
 }
 
 export async function setupExtension(
   t: TestContext,
-  opts: { config?: Partial<LaLogConfig>; ai?: Partial<AiConfig> } = {}
-): Promise<{ ctx: any; paths: LaLogPaths; th: ThresholdsMs }> {
+  opts: {
+    config?: Partial<LaLogConfig>;
+    ai?: Partial<AiConfig>;
+    dir?: string;
+    wsPath?: string;
+  } = {}
+): Promise<{ ctx: any; paths: LaLogPaths; th: ThresholdsMs; dir: string; wsPath: string }> {
   t.mock.timers.enable({ apis: ['Date', 'setTimeout', 'setInterval'] });
   t.mock.timers.setTime(BASE_TIME);
   const ext = await activateExtension(t, opts);
@@ -288,7 +301,10 @@ export async function setupExtension(
 }
 
 /** Build a real LaLogPanelProvider over a harness and resolve its webview. */
-export function resolvePanel(h: Harness): { provider: LaLogPanelProvider; registry: ProjectRegistry; view: any } {
+export function resolvePanel(
+  h: Harness,
+  opts: { multiProject?: boolean } = {}
+): { provider: LaLogPanelProvider; registry: ProjectRegistry; view: any } {
   const registry = new ProjectRegistry(h.paths);
   const provider = new LaLogPanelProvider(
     () => h.store.loadAll(),
@@ -300,6 +316,9 @@ export function resolvePanel(h: Harness): { provider: LaLogPanelProvider; regist
       wsKey: h.wsKey,
       wsName: h.wsName,
       wsPath: h.wsPath,
+      // Harness default is multi mode: the US-5.x stories are about explicit
+      // project management. Single-project tests pass `false` explicitly.
+      multiProject: opts.multiProject ?? true,
     }),
     h.store,
     registry,

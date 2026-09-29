@@ -13,6 +13,12 @@ import type { TechnicalEntry } from '../core/types';
 const MAX_FILE_BYTES = 2 * 1024 * 1024; // 2 MB
 const MAX_ENTRIES = 5000;
 
+/**
+ * Sidecar filename shape (see `store.ts` `sessionId`). Used ONLY to identify a
+ * sidecar file — the timestamp prefix is never parsed.
+ */
+const SIDECAR_RE = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})-[0-9a-f]{4}-[0-9a-f]{4}\.jsonl$/;
+
 export class TechnicalStore {
   constructor(
     private technicalDir: string,
@@ -72,6 +78,71 @@ export class TechnicalStore {
     } catch {
       /* ignore */
     }
+  }
+
+  /**
+   * Diffs-only retention: remove `type:'diff'` entries with `ts < cutoffTs`
+   * from every sidecar. Terminal and AI entries kept forever. Per file:
+   * read → filter → write `<file>.tmp` → rename (atomic, same pattern as
+   * saveSnapshot, store.ts:86-91). A re-stat guard skips a file that changed
+   * mid-sweep. A sidecar left with zero entries is deleted. Files not
+   * matching SIDECAR_RE are never touched. Best-effort.
+   * Returns the number of diff entries removed.
+   */
+  pruneDiffEntriesBefore(cutoffTs: number): number {
+    let removed = 0;
+    try {
+      if (!fs.existsSync(this.technicalDir)) return 0;
+      for (const name of fs.readdirSync(this.technicalDir)) {
+        if (name.endsWith('.tmp')) {
+          try {
+            fs.unlinkSync(path.join(this.technicalDir, name));
+          } catch {
+            /* best-effort */
+          }
+        }
+      }
+      for (const name of fs.readdirSync(this.technicalDir)) {
+        if (!SIDECAR_RE.test(name)) continue;
+        const file = path.join(this.technicalDir, name);
+        try {
+          const before = fs.statSync(file);
+          const lines = fs.readFileSync(file, 'utf8').split('\n').filter((l) => l.trim());
+          let dropped = false;
+          const kept: string[] = [];
+          for (const line of lines) {
+            let isOldDiff = false;
+            try {
+              const e = JSON.parse(line) as TechnicalEntry;
+              isOldDiff = e.type === 'diff' && typeof e.ts === 'number' && e.ts < cutoffTs;
+            } catch {
+              /* keep malformed lines verbatim */
+            }
+            if (isOldDiff) {
+              dropped = true;
+              removed += 1;
+              continue;
+            }
+            kept.push(line);
+          }
+          if (!dropped) continue;
+          const after = fs.statSync(file);
+          if (after.size !== before.size || after.mtimeMs !== before.mtimeMs) continue; // concurrent append — skip
+          if (kept.length === 0) {
+            fs.unlinkSync(file);
+            continue;
+          }
+          const tmp = file + '.tmp';
+          fs.writeFileSync(tmp, kept.join('\n') + '\n');
+          fs.renameSync(tmp, file);
+        } catch {
+          /* best-effort per file */
+        }
+      }
+    } catch {
+      /* best-effort */
+    }
+    return removed;
   }
 
   /** If the file exceeds maxFileBytes, keep only the last maxEntries lines. */

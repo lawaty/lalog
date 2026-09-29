@@ -8,7 +8,7 @@
 
 ## Overview
 
-LaLog (formerly "Worklog") is a VS Code extension (v0.5.0) that passively tracks your coding sessions — capturing edits, saves, terminal commands, file operations, debug sessions, and tasks — then prompts you at natural breakpoints to describe what you were working on. All data stays local in `~/.lalog/`.
+LaLog (formerly "Worklog") is a VS Code extension (v0.6.0) that passively tracks your coding sessions — capturing edits, saves, terminal commands, file operations, debug sessions, and tasks — then prompts you at natural breakpoints to describe what you were working on. All data stays local in `~/.lalog/`.
 
 AI assistance is **optional and off by default**: when enabled, LaLog uses the local `opencode` CLI to help draft session descriptions, add a narrative to reports, and produce a work review. It never captures or sends file contents or terminal output — only the compact session summary (file paths, counters, git branch, commit subjects).
 
@@ -93,6 +93,8 @@ Core settings are under `lalog.*`. AI settings are under `lalog.ai.*`.
 | `lalog.captureTerminalStdout` | boolean | `false` | Capture terminal stdout (opt-in) |
 | `lalog.captureAiLog` | boolean | `true` | Log AI interaction metadata |
 | `lalog.maxDiffChars` | number | `16000` | Max characters per diff entry |
+| `lalog.diffRetentionDays` | `14` | Days to keep `type:'diff'` entries (`0` keeps them forever) |
+| `lalog.multiProject` | `false` | Advanced: full multi-project management (off by default — one project per workspace) |
 | `lalog.maxStdoutChars` | number | `32000` | Max characters per terminal stdout |
 
 See [Features → Configuration](features.md#configuration) for the full list.
@@ -103,11 +105,20 @@ See [Features → Configuration](features.md#configuration) for the full list.
 |---------|----|-------------|
 | Start session | `lalog.startSession` | Begin a new session in the current workspace |
 | End session | `lalog.endSession` | Close the current session (with git annotation) |
+| End & restart session | `lalog.endSessionRestart` | Close the current session and immediately begin a new one |
+| Pause / resume session | `lalog.pauseSession` / `lalog.resumeSession` | Suspend tracking, then continue the same session |
 | Describe now | `lalog.describeNow` | Trigger the describe flow immediately |
+| Keep as background work | `lalog.background` | Mark the current session as background (never prompted about) |
 | Generate report | `lalog.report` | Session-centric markdown report (today/week/month) |
+| Export sessions CSV | `lalog.exportCsv` | One row per session with durations, project and description |
+| Export sessions PDF | `lalog.exportPdf` | Same data as a PDF, with per-detail toggles and personal/client presets |
 | Analyze my work | `lalog.analysis` | AI work review — wins/improvements/stalls (when AI enabled) |
 | Show sessions | `lalog.showSessions` | Focus the sessions sidebar view |
 | Edit session | `lalog.editSession` | Update a session's description |
+| Delete session | `lalog.deleteSession` | Remove a session and its technical sidecar, after confirmation |
+| Show session detail | `lalog.sessionDetail` | Open a session as a markdown document (splits, counters, files, notes, git, diffs, terminal, AI) |
+| Show file diffs for a day | `lalog.dayDiffs` | Every file change of one local day in a single document |
+| Rename project | `lalog.renameProject` | Rename the workspace's implicit project |
 | Export files by day | `lalog.exportFilesByDay` | Legacy `files_by_day.txt` export |
 
 ## Navigation

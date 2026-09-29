@@ -204,3 +204,100 @@ test('US-6.5 · files_by_day legacy export groups by project slug and day', asyn
   assert.ok(content.includes('auth.ts'));
   assert.ok(content.includes(':'));
 });
+
+test('US-6.5 · files_by_day uses local day keys', async (t) => {
+  const h = setupHarness(t);
+  // 23:30 local: a UTC key would file the edit under the next day.
+  t.mock.timers.setTime(new Date(2026, 8, 21, 23, 30).getTime());
+  await h.start();
+  await h.edit('/ws/src/late.ts');
+  await h.manager.endSession('user');
+  const closed = await h.closedSessions();
+  const written = await exportFilesByDay(h.paths, closed);
+  const content = fs.readFileSync(written[0], 'utf8');
+  assert.ok(content.includes('2026-09-21:'), 'filed under the local day');
+  assert.ok(!content.includes('2026-09-22:'), 'not filed under the UTC day');
+});
+
+// ---- US-6.8 · timeline slots carry session identity -------------------------
+
+const NOW = new Date(2026, 8, 21, 20, 0).getTime();
+
+/** `sessionAt`'s second argument is milliseconds of active time, not minutes. */
+function ms(hm: string): number {
+  const [h, m] = hm.split(':').map(Number);
+  return new Date(2026, 8, 21, h, m).getTime();
+}
+
+function day(snap: ReturnType<typeof insightsFor>, day: string) {
+  const row = snap.timeline.find((d) => d.day === day);
+  assert.ok(row, `timeline has a row for ${day}`);
+  return row!;
+}
+
+test('US-6.8 · two sessions in one hour collapse into one part with both session ids', () => {
+  const a = sessionAt(ms('10:00'), 30 * MIN, { id: 'a-1000' });
+  const b = sessionAt(ms('10:20'), 30 * MIN, { id: 'b-1020' });
+  const snap = insightsFor([a, b], [], 'today', NOW, 15 * MIN);
+  const cell = day(snap, '2026-09-21').cells[10];
+  assert.equal(cell.parts.length, 1, 'same project \u2192 one part');
+  assert.equal(cell.parts[0].ms, 60 * MIN, 'ms summed across both sessions');
+  assert.deepEqual(cell.parts[0].sessionIds.sort(), ['a-1000', 'b-1020']);
+  assert.equal(cell.ms, 60 * MIN, 'legacy ms is the dominant (only) part');
+  assert.equal(cell.projectName, 'ws1name');
+});
+
+test('US-6.8 · two projects in one hour produce parts sorted by ms with dominant legacy fields', () => {
+  const a = sessionAt(ms('10:00'), 30 * MIN, { id: 'a-1000', projectId: 'p1' });
+  const b = sessionAt(ms('10:00') + 1000, 10 * MIN, { id: 'b-1000', projectId: 'p2' });
+  const projects = [
+    { id: 'p1', name: 'Client A', color: '#409cd4', workspaceKeys: [], pathHints: [], createdAt: 0 },
+    { id: 'p2', name: 'Client B', color: '#2ea043', workspaceKeys: [], pathHints: [], createdAt: 1 },
+  ];
+  const snap = insightsFor([a, b], projects, 'today', NOW, 15 * MIN);
+  const cell = day(snap, '2026-09-21').cells[10];
+  assert.equal(cell.parts.length, 2);
+  assert.deepEqual(cell.parts.map((p) => p.projectName), ['Client A', 'Client B'], 'sorted ms desc');
+  assert.equal(cell.parts[0].ms, 30 * MIN);
+  assert.deepEqual(cell.parts[1].sessionIds, ['b-1000']);
+  assert.equal(cell.projectName, 'Client A', 'legacy field is the dominant project');
+  assert.equal(cell.ms, 30 * MIN);
+  assert.equal(cell.color, '#409cd4');
+});
+
+test('US-6.8 · an empty hour is a transparent cell with no parts', () => {
+  const a = sessionAt(ms('10:00'), 30 * MIN, { id: 'a-1000' });
+  const snap = insightsFor([a], [], 'today', NOW, 15 * MIN);
+  const cells = day(snap, '2026-09-21').cells;
+  const empty = cells[15];
+  assert.deepEqual(empty, { ms: 0, projectName: '', color: 'transparent', parts: [] });
+  assert.equal(cells[10].parts.length, 1, 'the busy hour still carries its part');
+});
+
+test('US-6.8 · a session spanning an hour boundary splits its ms across both cells', () => {
+  const s = sessionAt(ms('09:50'), 30 * MIN, { id: 'crossing' });
+  const snap = insightsFor([s], [], 'today', NOW, 15 * MIN);
+  const cells = day(snap, '2026-09-21').cells;
+  assert.equal(cells[9].parts[0].ms, 10 * MIN, '09:50\u201310:00 lands in the 09:00 cell');
+  assert.equal(cells[10].parts[0].ms, 20 * MIN, '10:00\u201310:20 lands in the 10:00 cell');
+  assert.deepEqual(cells[9].parts[0].sessionIds, ['crossing']);
+  assert.deepEqual(cells[10].parts[0].sessionIds, ['crossing']);
+});
+
+test('US-6.8 · every timeline part names a project that byProject knows', () => {
+  const a = sessionAt(ms('10:00'), 30 * MIN, { id: 'a-1000', projectId: 'p1' });
+  const b = sessionAt(ms('11:00'), 20 * MIN, { id: 'b-1100', projectId: 'p2' });
+  const c = sessionAt(ms('12:00'), 20 * MIN, { id: 'c-1200' }); // unassigned \u2192 workspace name
+  const projects = [
+    { id: 'p1', name: 'Client A', color: '#409cd4', workspaceKeys: [], pathHints: [], createdAt: 0 },
+    { id: 'p2', name: 'Client B', color: '#2ea043', workspaceKeys: [], pathHints: [], createdAt: 1 },
+  ];
+  const snap = insightsFor([a, b, c], projects, 'today', NOW, 15 * MIN);
+  const names = new Set(snap.byProject.map((p) => p.name));
+  const parts = day(snap, '2026-09-21').cells.flatMap((cell) => cell.parts);
+  assert.ok(parts.length >= 3, 'parts were built');
+  for (const p of parts) {
+    assert.ok(names.has(p.projectName), `${p.projectName} is in byProject`);
+  }
+  assert.equal(snap.byProject.length, 3);
+});

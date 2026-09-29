@@ -26,6 +26,7 @@ All data is stored in `~/.lalog/` (configurable via `lalog.dataDir`):
 ~/.lalog/
 ├── sessions.jsonl              # All closed sessions (append-only)
 ├── projects.json               # Curated project registry (rewritten atomically)
+├── projects.json.pre-collapse.bak  # Written once if multi-project was collapsed into one
 ├── active/
 │   ├── <wsKey>.json            # Active session snapshot per workspace
 │   └── <wsKey>.json.tmp        # Temporary file during atomic write
@@ -221,7 +222,25 @@ interface Project {
 }
 ```
 
-**Resolution rule** (`resolveProject`, pure): an explicit `session.projectId` wins; otherwise a session belongs to the first **non-archived** project claiming its `workspaceKey`; otherwise it's unassigned.
+**Resolution rule** (`resolveProject`, pure): an explicit `session.projectId` wins; otherwise a session belongs to the first **non-archived** project claiming its `workspaceKey`; otherwise it's unassigned. There is **no basename fallback** — only claims count, which is why the single-project migration below grows the claim set instead of relying on the folder name.
+
+### Single implicit project (default, `lalog.multiProject: false`)
+
+On every activation, before the first render, `ProjectRegistry.ensureSingleProject` makes the registry hold exactly one project for the open workspace (ADR-029):
+
+| Projects found | Result |
+|----------------|--------|
+| 0 | Create one named after the open folder, claiming the current `workspaceKey` + `wsPath` |
+| 1 | Un-archive it, add the current `workspaceKey` + `wsPath` + every key found in `sessions.jsonl`; **the name is never changed** |
+| 2+ | Pick a survivor — name equal to the folder name, else oldest non-archived, else oldest — union every other project's `workspaceKeys` and `pathHints` into it (plus the current key/path and all history keys), un-archive it, remove the rest |
+
+The survivor keeps its own `id`, `color` and `createdAt`.
+
+**Backup**: when a collapse happens, `~/.lalog/projects.json.pre-collapse.bak` is written **once** (only if it does not already exist), holding the original multi-project file byte-for-byte. Later activations never rewrite it, so the earliest pre-collapse state is the one that survives. The `projects.json` schema is unchanged — there is no version marker, because the collapse is idempotent and safe to re-run.
+
+**Session re-pointing**: any `sessions.jsonl` line whose `projectId` refers to a project removed by the collapse is rewritten (full-file rewrite, as in US-4.7) to the survivor's id. Sessions with no `projectId` need no rewrite: they resolve through the survivor's claims, which now include every key in the recorded history — so a renamed or moved folder keeps its history.
+
+With `lalog.multiProject: true` the whole migration is skipped: nothing is collapsed, no backup is written, and a workspace claimed by several projects still resolves to the first match (known limitation).
 
 ---
 
@@ -445,6 +464,25 @@ interface TechnicalAiInteraction {
 | `maxStdoutChars` | 32,000 | Max characters per terminal stdout; appended with `\n...[truncated]` |
 | File size | 2 MB | When a sidecar exceeds this, it is rotated |
 | Entries | 5,000 | On rotation, only the last N entries are kept |
+
+### Retention
+
+Diffs expire; terminal and AI metadata does not.
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `lalog.diffRetentionDays` | 14 | Days to keep `type:'diff'` entries. `0` keeps them forever. |
+
+On every activation, LaLog sweeps `technical/` once:
+
+- Every file matching the sidecar name pattern `<YYYYMMDD-HHMM>-<ws>-<rand>.jsonl` is read, and any `type:'diff'` entry whose own `ts` is older than `now - diffRetentionDays × 24h` is removed. Terminal and AI entries are never removed, regardless of age.
+- A sidecar that is left with no entries at all is deleted.
+- A sidecar that contains nothing to remove is not rewritten (byte-identical, untouched mtime).
+- Any other file in `technical/` (notes, scratch files, anything that is not a sidecar) is never read or written.
+- Lines that are not valid JSON are preserved verbatim.
+- The rewrite itself is atomic: the filtered content is written to `<file>.tmp` and `renameSync`'d over the original. A file whose size or mtime changed between the read and the rename is skipped (something appended to it mid-sweep), and a stray `.tmp` from an interrupted run is deleted at the start of the next sweep.
+
+A session whose diffs have aged out still shows its terminal commands and AI interactions in the session-detail document, with a note explaining that the diffs are outside the retention window.
 
 ### Redaction
 

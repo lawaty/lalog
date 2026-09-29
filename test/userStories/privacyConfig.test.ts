@@ -1,12 +1,13 @@
 import test from 'node:test';
+import type { TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { setupHarness, setupExtension, createHarness, defaultConfig, flush } from '../helpers/harness';
 import { mockVscode } from '../helpers/mockVscode';
-import { buildPaths, expandHome } from '../../src/storage/store';
-import { thresholdsMs } from '../../src/core/config';
+import { buildPaths, expandHome, ensureDirs } from '../../src/storage/store';
+import { thresholdsMs, readConfig } from '../../src/core/config';
 import { TechnicalStore } from '../../src/storage/technicalStore';
 import { compileRedactPatterns, redactText } from '../../src/capture/redactText';
 
@@ -169,4 +170,105 @@ test('US-8.6 · debugTimeScale divides all time thresholds consistently', () => 
   assert.equal(scaled.staleAfter, Math.round(base.staleAfter / 60));
   assert.equal(scaled.autoEndIdle, Math.round(base.autoEndIdle / 60));
   assert.equal(scaled.maxGraceExtensions, base.maxGraceExtensions, 'counts are not scaled');
+});
+
+test('US-8.7 · readConfig defaults diffRetentionDays to 14', () => {
+  mockVscode.reset();
+  assert.equal(readConfig().diffRetentionDays, 14);
+});
+
+/** Seed a sidecar for `id` with the given entries. */
+function seedSidecar(
+  paths: { technicalDir: string },
+  id: string,
+  entries: Record<string, unknown>[]
+): string {
+  const file = path.join(paths.technicalDir, id + '.jsonl');
+  fs.writeFileSync(file, entries.map((e) => JSON.stringify(e)).join('\n') + '\n');
+  return file;
+}
+
+/**
+ * Activate against a caller-chosen data dir (setupExtension allocates its own
+ * temp dir, which is too late to pre-seed sidecars in).
+ */
+async function activateAt(t: TestContext, dataDir: string, diffRetentionDays: number): Promise<void> {
+  mockVscode.setConfig('lalog', { ...defaultConfig(), dataDir, diffRetentionDays });
+  mockVscode.setConfig('lalog.ai', { enabled: false });
+  const wsPath = path.join(dataDir, 'workspace');
+  fs.mkdirSync(wsPath, { recursive: true });
+  mockVscode.setWorkspaceFolders([wsPath]);
+  const ctx = {
+    subscriptions: [] as any[],
+    globalState: { get: () => undefined, update: async () => undefined },
+  };
+  const { activate } = await import('../../src/extension');
+  activate(ctx as any);
+  await flush();
+  t.after(async () => {
+    for (const s of ctx.subscriptions) {
+      try {
+        s?.dispose?.();
+      } catch {
+        /* ignore */
+      }
+    }
+    mockVscode.reset();
+  });
+}
+
+const OLD_DIFF = {
+  type: 'diff',
+  ts: Date.parse('2026-01-02T10:00:00'),
+  path: '/ws/a.ts',
+  diff: '--- a\n+++ b\n+x',
+  linesAdded: 1,
+  linesRemoved: 0,
+  newFile: false,
+};
+const OLD_TERMINAL = {
+  type: 'terminal',
+  ts: Date.parse('2026-01-02T10:00:00'),
+  commandLine: 'npm test',
+  exitCode: 0,
+  durationMs: 1000,
+  confidence: 'high',
+};
+
+test('US-8.7 · activation sweeps old diffs but keeps terminal entries', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout', 'setInterval'] });
+  t.mock.timers.setTime(Date.parse('2026-09-21T09:00:00'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lalog-sweep-'));
+  const paths = buildPaths(dir);
+  ensureDirs(paths);
+  const mixed = seedSidecar(paths, '20260102-0900-aaaa-bbbb', [OLD_DIFF, OLD_TERMINAL]);
+  const allDiffs = seedSidecar(paths, '20260102-1000-cccc-dddd', [OLD_DIFF]);
+
+  await activateAt(t, dir, 14);
+
+  const kept = fs.readFileSync(mixed, 'utf8').split('\n').filter(Boolean);
+  assert.equal(kept.length, 1, 'only the terminal entry survived the sweep');
+  assert.equal(JSON.parse(kept[0]).type, 'terminal');
+  assert.equal(fs.existsSync(allDiffs), false, 'an all-diff sidecar is deleted');
+  t.mock.timers.reset();
+});
+
+test('US-8.7 · diffRetentionDays 0 keeps every diff', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout', 'setInterval'] });
+  t.mock.timers.setTime(Date.parse('2026-09-21T09:00:00'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lalog-sweep-keep-'));
+  const paths = buildPaths(dir);
+  ensureDirs(paths);
+  const file = seedSidecar(paths, '20260102-0900-aaaa-bbbb', [OLD_DIFF]);
+  const before = fs.readFileSync(file, 'utf8');
+
+  await activateAt(t, dir, 0);
+
+  assert.equal(fs.existsSync(file), true, 'sidecar untouched when retention is off');
+  assert.equal(
+    fs.readFileSync(file, 'utf8'),
+    before,
+    'byte-identical — no rewrite happens when retention is off'
+  );
+  t.mock.timers.reset();
 });

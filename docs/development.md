@@ -35,6 +35,7 @@ npm install
 ```
 
 ---
+---
 
 ## Project Structure
 
@@ -48,25 +49,42 @@ lalog/
 │   │   ├── activityTracker.ts # VS Code event listener
 │   │   ├── breakpoints.ts     # Natural breakpoint detector
 │   │   ├── config.ts          # Settings + thresholds
+│   │   ├── projects.ts        # Project resolution
 │   │   ├── spans.ts           # Active-span builder (updateActiveSpan)
 │   │   └── types.ts           # Shared types
+│   ├── capture/
+│   │   ├── diffCapture.ts     # Per-file diff capture (save events)
+│   │   ├── terminalCapture.ts # Terminal command capture
+│   │   ├── aiLog.ts           # AI interaction capture
+│   │   └── redactText.ts      # Redaction rules
 │   ├── prompts/
 │   │   ├── promptCoordinator.ts # Mutex + spacing
 │   │   └── describeFlow.ts    # Text-first describe UI
 │   ├── storage/
-│   │   ├── sessionStore.ts    # Session CRUD
-│   │   └── store.ts           # Filesystem primitives
+│   │   ├── store.ts           # Filesystem primitives + paths
+│   │   ├── sessionStore.ts    # Session CRUD (append-only log)
+│   │   ├── projectRegistry.ts # projects.json + claims
+│   │   └── technicalStore.ts  # Per-session technical sidecar JSONL
 │   ├── reporting/
+│   │   ├── ranges.ts          # Local calendar-day math (incl. dayKey)
 │   │   ├── aggregate.ts       # todayActiveMs, todayUntrackedMs
-│   │   └── report.ts          # Markdown report generation
+│   │   ├── insights.ts        # Pure period aggregations + timeline
+│   │   ├── report.ts          # Markdown report generation
+│   │   ├── sessionDetail.ts   # Session/daily detail documents
+│   │   ├── pdf.ts             # Dependency-free PDF writer
+│   │   └── pdfReport.ts       # PDF model + presets
 │   ├── integrations/
 │   │   ├── git.ts             # Branch + commit annotation
 │   │   └── legacyExport.ts    # files_by_day.txt export
+│   ├── opencode/              # AI analysis bridge
 │   └── ui/
 │       ├── statusBar.ts       # Status bar item
-│       └── sessionsView.ts    # Tree view provider
+│       └── panelView.ts       # Webview panel (Sessions/Insights/Projects)
 ├── test/
-│   └── stateMachine.test.ts   # State machine tests
+│   ├── helpers/
+│   │   ├── harness.ts         # Shared test harness
+│   │   └── mockVscode.ts      # vscode module mock
+│   └── userStories/           # Tests keyed to docs/user-stories.md
 ├── dist/                      # Build output (gitignored)
 │   ├── extension.js
 │   └── extension.js.map
@@ -291,7 +309,7 @@ vsce publish
 - **Integration tests** for storage (JSONL read/write, snapshot recovery)
 - **Manual tests** for UI (prompts, status bar, webview panel)
 
-The current test suite (`test/stateMachine.test.ts`) uses Node's built-in test runner (`node:test`). Tests are synchronous and fast.
+The current test suite (`test/userStories/*.test.ts`) uses Node's built-in test runner (`node:test`). Tests are synchronous and fast.
 
 ### Documentation
 

@@ -3,7 +3,7 @@
   "displayName": "LaLog",
   "description": "Local-first work session tracker with automatic event capture, human session descriptions, and optional opencode-powered AI assistance.",
   "icon": "resources/icon.png",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "publisher": "lawaty",
   "license": "MIT",
   "repository": {
@@ -129,6 +129,16 @@
           "default": 16000,
           "description": "Maximum characters per diff entry before truncation"
         },
+        "lalog.diffRetentionDays": {
+          "type": "number",
+          "default": 14,
+          "description": "Days to keep captured file diffs in ~/.lalog/technical/ (diff entries older than this are pruned at startup). 0 keeps diffs forever. Terminal and AI-interaction metadata are always kept."
+        },
+        "lalog.multiProject": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable multiple projects (advanced). Off by default: LaLog keeps a single project for this workspace — named after the folder, renameable — and all recorded history belongs to it. On: full project management (create, claim, archive)."
+        },
         "lalog.maxStdoutChars": {
           "type": "number",
           "default": 32000,
@@ -225,6 +235,18 @@
         "title": "LaLog: Delete session"
       },
       {
+        "command": "lalog.sessionDetail",
+        "title": "LaLog: Show session detail"
+      },
+      {
+        "command": "lalog.dayDiffs",
+        "title": "LaLog: Show file diffs for a day"
+      },
+      {
+        "command": "lalog.renameProject",
+        "title": "LaLog: Rename project"
+      },
+      {
         "command": "lalog.exportFilesByDay",
         "title": "LaLog: Export files by day"
       }
@@ -260,6 +282,7 @@
     "@types/diff": "^7.0.2",
     "@types/node": "^20.11.0",
     "@types/vscode": "^1.93.0",
+    "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.20.2",
     "typescript": "^5.4.5"
   },

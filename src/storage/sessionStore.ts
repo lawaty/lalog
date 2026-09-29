@@ -70,14 +70,26 @@ export class SessionStore {
     return found;
   }
 
+  /**
+   * Atomically replace the sessions file (tmp + rename). Rewrites must never
+   * leave a truncated sessions.jsonl behind — a crash mid-write would silently
+   * drop the user's entire history on the next read.
+   */
+  private writeSessionsFile(contents: string): void {
+    const file = this.opts.paths.sessionsFile;
+    const fs = require('fs') as typeof import('fs');
+    const tmp = file + '.tmp';
+    fs.writeFileSync(tmp, contents);
+    fs.renameSync(tmp, file);
+  }
+
   /** Rewrite the full sessions file, replacing the targeted session's fields. */
   async updateSession(id: string, patch: Partial<Session>): Promise<void> {
     const all = await this.loadAll();
     const idx = all.findIndex((s) => s.id === id);
     if (idx < 0) return;
     all[idx] = { ...all[idx], ...patch };
-    const fs = require('fs') as typeof import('fs');
-    fs.writeFileSync(this.opts.paths.sessionsFile, all.map((s) => JSON.stringify(s)).join('\n') + '\n');
+    this.writeSessionsFile(all.map((s) => JSON.stringify(s)).join('\n') + '\n');
   }
 
   /**
@@ -108,7 +120,7 @@ export class SessionStore {
       kept.push(line);
     }
     if (!removed) return false;
-    fs.writeFileSync(file, kept.join('\n'));
+    this.writeSessionsFile(kept.join('\n'));
     return true;
   }
 

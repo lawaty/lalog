@@ -7,6 +7,7 @@ import { mockVscode } from '../helpers/mockVscode';
 import { LaLogStatusBar } from '../../src/ui/statusBar';
 import { SessionStore } from '../../src/storage/sessionStore';
 import { workspaceKey } from '../../src/storage/store';
+import { dayKey } from '../../src/reporting/ranges';
 
 function lastState(): any {
   const msgs = mockVscode._webviewMessages;
@@ -102,13 +103,24 @@ test('US-4.2 · quick actions map to commands', async (t) => {
   assert.ok(exports.some((f) => f.endsWith('.csv')), 'csv written');
 });
 
+test('US-4.1 · panel html carries surrogate-pair emoji escapes (no cooked \\U text)', async (t) => {
+  const h = setupHarness(t);
+  const { view } = resolvePanel(h);
+  const html = view.webview.html;
+  assert.ok(html.includes('\ud83d\udcc4'), 'file icon is a real surrogate pair');
+  assert.ok(!html.includes('U0001f4c1'), 'no cooked top-files escape');
+  assert.ok(!html.includes('U0001f4c4'), 'no cooked file-row escape');
+  assert.ok(!html.includes('U0001f4dd'), 'no cooked notes escape');
+  assert.ok(html.includes("'openSessionDetail'"), 'rows post the detail message');
+});
+
 test('US-4.3 · sessions grouped by day, newest first', async (t) => {
   const h = setupHarness(t);
-  t.mock.timers.setTime(Date.parse('2026-09-20T10:00:00'));
+  t.mock.timers.setTime(new Date(2026, 8, 20, 10, 0).getTime());
   await h.start();
   await h.edit('/ws/a.ts');
   await h.manager.endSession('user');
-  t.mock.timers.setTime(Date.parse('2026-09-21T09:30:00'));
+  t.mock.timers.setTime(new Date(2026, 8, 21, 9, 30).getTime());
   await h.edit('/ws/b.ts');
   await h.manager.endSession('user');
   resolvePanel(h);
@@ -121,6 +133,31 @@ test('US-4.3 · sessions grouped by day, newest first', async (t) => {
   assert.equal(state.groups[0].sessions.length, 1);
   assert.equal(state.groups[0].sessions[0].workspaceName, h.wsName);
   assert.ok(state.groups[0].sessions[0].startedAt > state.groups[1].sessions[0].startedAt);
+});
+
+test('US-4.3 · a 23:30 session files under its local day everywhere', async (t) => {
+  const h = setupHarness(t);
+  const late = new Date(2026, 8, 21, 23, 30).getTime();
+  t.mock.timers.setTime(late);
+  await h.start();
+  await h.edit('/ws/a.ts');
+  await h.work(5);
+  const live = h.manager.getSession()!;
+  const expected = '2026-09-21';
+  assert.equal(dayKey(live.startedAt), expected, 'fixture really is 23:30 local on 2026-09-21');
+  await h.manager.endSession('user');
+  resolvePanel(h);
+  await waitFor(() => lastState() !== null);
+  const state = lastState();
+  assert.equal(state.groups[0].day, expected, 'sessions tab groups under the local day');
+  assert.ok(
+    state.insights.today.timeline.some((d: any) => d.day === expected),
+    'insights timeline agrees on the day'
+  );
+  assert.ok(
+    state.insights.today.byDay.some((d: any) => d.day === expected),
+    'insights day totals agree on the day'
+  );
 });
 
 test('US-4.4 · session detail includes split, type, reason, events, files, notes, git', async (t) => {
@@ -349,5 +386,83 @@ test('US-4.7 · live session and unknown ids are not deletable', async (t) => {
   assert.equal(
     fs.readFileSync(ext.paths.sessionsFile, 'utf8').split('\n').filter(Boolean).length,
     1
+  );
+});
+// ---- US-6.8 · enhanced timeline ---------------------------------------------
+
+test('US-6.8 · timeline cells carry the session ids behind each hour', async (t) => {
+  const h = setupHarness(t);
+  await h.start();
+  await h.work(30);
+  const live = h.manager.getSession()!;
+  await h.manager.endSession('user');
+  resolvePanel(h);
+  await waitFor(() => lastState() !== null);
+  const st = lastState();
+  assert.ok(st.insights.today.byDay.length >= 1, 'byDay stays in the snapshot payload');
+
+  const day = dayKey(live.startedAt);
+  const row = st.insights.today.timeline.find((d: any) => d.day === day);
+  assert.ok(row, `timeline has a row for ${day}`);
+  const cell = row.cells[new Date(live.startedAt).getHours()];
+  assert.ok(
+    cell.parts.some((p: any) => p.sessionIds.includes(live.id)),
+    'the session id is reachable from the hour cell'
+  );
+  assert.ok(cell.parts.some((p: any) => p.ms > 0), 'the cell carries time');
+});
+
+test('US-6.8 · clicking a timeline slot opens the session detail behind it', async (t) => {
+  const ext = await setupExtension(t);
+  const store = new SessionStore({ paths: ext.paths, th: ext.th });
+  await seedClosedSession(t, ext, '/ws/a.ts');
+  await seedClosedSession(t, ext, '/ws/b.ts');
+  const all = await store.loadAll();
+  assert.equal(all.length, 2);
+  await store.updateSession(all[0].id, { description: 'alpha' });
+  await store.updateSession(all[1].id, { description: 'beta' });
+
+  const view = mockWebviewView();
+  mockVscode._webviewProvider.resolveWebviewView(view);
+  await waitFor(() => lastState() !== null);
+  assert.ok(view.webview.html.includes('openHourSessions'), 'cells post the hour message');
+  assert.ok(view.webview.html.includes('openDayDiffs'), 'day labels post the day-diffs message');
+
+  // One session in the hour → straight to its document.
+  view._post({ type: 'openHourSessions', ids: [all[0].id] });
+  await waitFor(() => mockVscode._openedDocs.length === 1);
+  assert.ok(mockVscode._openedDocs[0].content!.includes('alpha'), 'the single session opened');
+
+  // Several sessions in the hour → a picker, then the picked document.
+  mockVscode.queueQuickPick(all[1].id);
+  view._post({ type: 'openHourSessions', ids: [all[0].id, all[1].id] });
+  await waitFor(() => mockVscode._openedDocs.length === 2);
+  const pick = mockVscode._promptCalls.find((c) => c.title === 'Sessions in this hour');
+  assert.ok(pick, 'the hour picker was shown');
+  assert.equal((pick!.items as { id: string }[]).length, 2, 'both sessions offered');
+  assert.ok((pick!.items as { label: string }[]).some((i) => i.label.includes('alpha')));
+  assert.ok(mockVscode._openedDocs[1].content!.includes('beta'), 'the picked session opened');
+
+  // Nothing resolvable → no document, no picker.
+  view._post({ type: 'openHourSessions', ids: [] });
+  view._post({ type: 'openHourSessions', ids: ['nope', 42] });
+  view._post({ type: 'openHourSessions', ids: ['nope', 'nope2'] });
+  await flush();
+  assert.equal(mockVscode._openedDocs.length, 2, 'no extra document');
+  assert.equal(
+    mockVscode._promptCalls.filter((c) => c.title === 'Sessions in this hour').length,
+    1,
+    'unresolvable ids do not open a picker'
+  );
+
+  // Day-label click → the day-diffs document for that day (round-trips through
+  // the real handler, not just the string-presence check above).
+  view._post({ type: 'openDayDiffs', day: dayKey(all[0].startedAt) });
+  await waitFor(() => mockVscode._openedDocs.length === 3);
+  const dayDoc = mockVscode._openedDocs[2].content!;
+  assert.ok(dayDoc.includes('# File changes'), 'day label opened the day-diffs document');
+  assert.ok(
+    dayDoc.includes(dayKey(all[0].startedAt)),
+    'the openDayDiffs day arg is honoured'
   );
 });

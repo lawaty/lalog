@@ -6,7 +6,7 @@ import { LaLogPaths } from '../storage/store';
 import { splitActiveMinutes } from './spans';
 import { resolveProject, resolveProjectName, Project } from '../core/projects';
 import { hourlyBreakdown, effectiveMs } from './insights';
-import { ReportRange, rangeStart, rangeEnd, rangeLabel } from './ranges';
+import { ReportRange, rangeStart, rangeEnd, rangeLabel, dayKey } from './ranges';
 import { DEFAULT_IDLE_GAP_MS } from '../core/config';
 
 export { ReportRange, rangeStart, rangeEnd, rangeLabel } from './ranges';
@@ -54,8 +54,7 @@ export async function generateReport(
 
   const dayOrder: string[] = [];
   for (const s of within) {
-    const dv = new Date(s.startedAt);
-    const key = `${dv.getFullYear()}-${String(dv.getMonth() + 1).padStart(2, '0')}-${String(dv.getDate()).padStart(2, '0')}`;
+    const key = dayKey(s.startedAt);
     if (!dayOrder.includes(key)) dayOrder.push(key);
   }
   dayOrder.sort();
@@ -148,8 +147,7 @@ export interface ReportFileOptions {
 }
 
 export function localStamp(t: number): string {
-  const d = new Date(t);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  return dayKey(t);
 }
 
 /** Save report to `reports/` with a date-prefixed, deduplicated (non-overwriting) filename. */

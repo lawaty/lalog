@@ -59,6 +59,8 @@ let warningMessages: string[] = [];
 let nextWarningChoices: (string | undefined)[] = [];
 let warningCalls: { msg: string; options?: any; buttons: string[] }[] = [];
 let openTextContent = '';
+let openedDocs: { language?: string; content?: string }[] = [];
+let shownDocs: any[] = [];
 let statusBarItems: any[] = [];
 let webviewMessages: any[] = [];
 let webviewProvider: any = null;
@@ -97,10 +99,17 @@ export const workspace = {
       },
     };
   },
-  openTextDocument: async (arg: any) => ({
-    getText: () => openTextContent,
-    uri: { fsPath: typeof arg === 'string' ? arg : arg?.fsPath ?? '' },
-  }),
+  openTextDocument: async (arg: any) => {
+    if (arg && typeof arg === 'object' && !('fsPath' in arg) && !('scheme' in arg)) {
+      const doc = { language: arg.language, content: arg.content };
+      openedDocs.push(doc);
+      return { getText: () => doc.content ?? '', uri: { fsPath: '' } };
+    }
+    return {
+      getText: () => openTextContent,
+      uri: { fsPath: typeof arg === 'string' ? arg : arg?.fsPath ?? '' },
+    };
+  },
   onDidChangeTextDocument: onDidChangeTextDocument.on,
   onDidSaveTextDocument: onDidSaveTextDocument.on,
   onDidCreateFiles: onDidCreateFiles.on,
@@ -197,7 +206,10 @@ export const window = {
     });
     return nextWarningChoices.shift();
   },
-  showTextDocument: async () => ({}),
+  showTextDocument: async (doc: any, opts?: any) => {
+    shownDocs.push({ doc, opts });
+    return {};
+  },
   createStatusBarItem: () => {
     const item = { text: '', tooltip: '', command: '', show() {}, hide() {}, dispose() {} };
     statusBarItems.push(item);
@@ -290,6 +302,12 @@ export const mockVscode = {
   set _openTextContent(v: string) {
     openTextContent = v;
   },
+  get _openedDocs() {
+    return openedDocs;
+  },
+  get _shownDocs() {
+    return shownDocs;
+  },
 
   reset() {
     for (const e of allEmitters) e.clear();
@@ -305,6 +323,8 @@ export const mockVscode = {
     nextWarningChoices = [];
     warningCalls = [];
     openTextContent = '';
+    openedDocs = [];
+    shownDocs = [];
     statusBarItems = [];
     webviewMessages = [];
     webviewProvider = null;

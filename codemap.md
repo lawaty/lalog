@@ -6,29 +6,30 @@ Local-first VS Code work-session tracker. Extension entry is `src/extension.ts`;
 
 | Area | Files | What lives there |
 |------|-------|------------------|
-| **Entry / wiring** | `src/extension.ts` | `activate()`/`deactivate()`, command registration, status bar, event subscriptions (terminal/editor listeners), AI bridge + git annotation wiring |
+| **Entry / wiring** | `src/extension.ts` | `activate()`/`deactivate()`, command registration (`lalog.sessionDetail` / `lalog.dayDiffs` / `lalog.renameProject` among them), status bar, event subscriptions (terminal/editor listeners), activation sweeps (diffs-only retention, single-project migration), AI bridge + git annotation wiring |
 | **Orchestrator** | `src/core/sessionManager.ts` | The big one. Session lifecycle: `openWorkspace`, `endSession`, `startFresh`, `endAndRestart`, heartbeat (`checkIdle`, `checkAutoEnd`, `checkProgress`), prompt scheduling (`presentDescribe`, `presentWrap`, breakpoints), describe application (`applyDescribeResult`, `applyBackgroundWork`), recovery (`finishRecovered`), technical-capture wiring |
 | **Pure state machine** | `src/core/stateMachine.ts` | `Machine`, `onActivity`, `startSession`, `autoClose`. Transitions to `describePending` (≥90 active min), `wrapPending` (≥210), `grace`, hard split at 5h |
 | **Prompts (UI)** | `src/prompts/promptCoordinator.ts` | Mutex + min-spacing (`acquire`/`release`), `askWrap`, `askProgressUpdate`, `askStillWorking`. No prompt asks on close (ADR-019) |
 | **Describe flow** | `src/prompts/describeFlow.ts` | Text-first describe UI: InputBox first (Enter submits), then task-type QuickPick via `quickPickWithDefault` (low-level, pre-selects "other"). `SESSION_TYPES`, `buildPrefill`, `DescribeResult`. AI draft + "same as last" reachable from the no-text fallback |
 | **Breakpoints** | `src/core/breakpoints.ts` | `BreakpointDetector` (`terminal`/`git-commit`/`debug`/`return-idle`/`force`) — prompts are delivered at natural pauses |
-| **Config** | `src/core/config.ts` | `readConfig`/`readAiConfig` from VS Code settings, `ThresholdsMs` (all time gates with `debugTimeScale`) |
+| **Config** | `src/core/config.ts` | `readConfig`/`readAiConfig` from VS Code settings, `ThresholdsMs` (all time gates with `debugTimeScale`), `diffRetentionDays` / `multiProject` |
 | **Types** | `src/core/types.ts` | `Session`, `TrackedEvent`, session state, technical entry types |
 | **Activity capture** | `src/core/activityTracker.ts` | Editor/edit/save/fileop/task/debug event listeners → `TrackedEvent`s (data) |
 | **Spans** | `src/core/spans.ts` | Active-time span building, gap-based accrual, `trimToCutoff` (used at idle-end), outside-VS-Code classification |
 | **Storage** | `src/storage/store.ts` | FS primitives (`appendLine`, atomic rename), `workspaceKey`, `LaLogPaths` |
 | | `src/storage/sessionStore.ts` | Session CRUD: `newSession`, `saveActive` (60s snapshots), `close` → `sessions.jsonl`, `loadActive`, `updateSession`, `deleteSession` |
-| | `src/storage/projectRegistry.ts` | `projects.json` — claim folders, explicit session assignment, derive-on-read |
-| | `src/storage/technicalStore.ts` | Per-session sidecar JSONL (`technical/<id>.jsonl`) with rotation |
+| | `src/storage/projectRegistry.ts` | `projects.json` — claim folders, explicit session assignment, derive-on-read, plus `ensureSingleProject` (single implicit project + collapse migration) |
+| | `src/storage/technicalStore.ts` | Per-session sidecar JSONL (`technical/<id>.jsonl`) with rotation, and `pruneDiffEntriesBefore` (diffs-only retention; terminal/AI entries kept forever) |
 | **Technical capture** | `src/capture/diffCapture.ts` | Unified diffs at save (redacted, capped at `maxDiffChars`) |
 | | `src/capture/terminalCapture.ts` | Shell-integration command/stdout capture (`read()` to async iterator), ANSI strip |
 | | `src/capture/aiLog.ts` | AI interaction metadata (char counts/latency only — never prompt/response text) |
 | | `src/capture/redactText.ts` | `compileRedactPatterns` from `lalog.redactPatterns` |
-| **UI** | `src/ui/panelView.ts` | Sessions/Insights tabs, Now box footer (pause/resume/end), session rows with row actions (edit ✎ / delete 🗑), project filter chips |
+| **UI** | `src/ui/panelView.ts` | Sessions/Insights/Projects tabs, Now box footer (pause/resume/end), session rows (click opens the detail document; ✎ / 🗑 actions), project filter chips, timeline hour slots + day rows |
 | | `src/ui/statusBar.ts` | Status bar item + quick-actions menu |
 | **Reporting** | `src/reporting/report.ts` | Markdown report generation, scoping |
-| | `src/reporting/insights.ts` | Pure aggregations: totals, in/out split, per-project/day, hour timeline (`insightsFor`, `effectiveMs`) |
-| | `src/reporting/ranges.ts` | Range math (today/week/month/31-day) |
+| | `src/reporting/insights.ts` | Pure aggregations: totals, in/out split, per-project/day, hour timeline (`insightsFor`, `effectiveMs`); each hour cell carries `HourPart.parts` — per-project slices with the contributing `sessionIds` |
+| | `src/reporting/ranges.ts` | Range math (today/week/month/31-day) and `dayKey` — the single local `YYYY-MM-DD` day-key definition |
+| | `src/reporting/sessionDetail.ts` | Pure markdown renderers: `renderSessionDetail` (session document), `renderDayDiffs` (one day = all its file changes), `diffRetentionView`, `fmtHM`, `DIFF_PREVIEW_CHARS` |
 | | `src/reporting/aggregate.ts` | `todayActiveMs`, `todayUntrackedMs` |
 | | `src/reporting/spans.ts` | Report-span helpers |
 | | `src/reporting/pdf.ts` | Dependency-free PDF 1.4 writer (base-14 fonts, xref, word wrap, deterministic bytes) |
@@ -38,7 +39,7 @@ Local-first VS Code work-session tracker. Extension entry is `src/extension.ts`;
 | **opencode (AI)** | `src/opencode/service.ts`, `bridge.ts`, `runTransport.ts` | Runs the local `opencode` CLI, JSON-line transport, retries/timeouts |
 | | `src/opencode/prompts.ts` | Prompt templates for description drafting |
 | | `src/opencode/redact.ts`, `modelPolicy.ts`, `types.ts` | Data-policy redaction, model allowlist/contract, request types |
-| **Tests** | `test/*.test.ts` | node:test, bundled by `esbuild.test.js`. `stateMachine`, `spans`, `trim`, `sessionStore`, `projects`, `insights`, `diffCapture`, `terminalCapture`, `aiLog`, `redactText`, `technicalStore`, `opencode` |
+| **Tests** | `test/userStories/*.test.ts` | node:test, bundled by `esbuild.test.js`, one file per epic and named after the `US-` ids it covers: `tracking`, `capture`, `prompts`, `ui`, `sessionDetail`, `projects`, `insightsReporting`, `pdfExport`, `integrations`, `privacyConfig`, `ai`, `nonGoals`, `dataIntegrity` |
 | **Docs** | `docs/` | `features.md` (behavior), `architecture.md` (diagrams), `decisions.md` (ADRs), `data-format.md`, `development.md`, `roadmap.md` |
 | **Build** | `esbuild.js`, `esbuild.test.js`, `package.json` | Bundle to `dist/`, tests to `dist-test/`, `vsce package` for `.vsix` |
 
@@ -54,6 +55,7 @@ Local-first VS Code work-session tracker. Extension entry is `src/extension.ts`;
 | Change what's captured | `src/capture/*` + toggles in `sessionManager` constructor |
 | Change report/insights output | `src/reporting/*` (pure, testable) |
 | Change sessions view UI | `src/ui/panelView.ts` |
+| Change what a session/document shows | `src/reporting/sessionDetail.ts` (pure renderers) + `src/extension.ts` (commands `lalog.sessionDetail` / `lalog.dayDiffs`) |
 | Add AI behavior | `src/opencode/*`, gated by `lalog.ai.enabled` |
 | Describe an upcoming ADR/diagram change | `docs/decisions.md` / `docs/architecture.md` |
 

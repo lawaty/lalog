@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { Session } from '../core/types';
 import { LaLogPaths } from '../storage/store';
+import { dayKey } from '../reporting/ranges';
 
 /**
  * Maintains `<projectSlug>/files_by_day.txt` in the exact format that the user's
@@ -24,11 +25,11 @@ export async function exportFilesByDay(
 
   for (const s of sessions) {
     for (const f of s.events.topFiles) {
-      const day = new Date(f.firstTouch).toISOString().slice(0, 10);
+      const day = dayKey(f.firstTouch);
       const set = fileDays.get(f.path) ?? new Set<string>();
       set.add(day);
       // Midnight-spanning: add the lastTouch day too if edits happened there.
-      const lastDay = new Date(f.lastTouch).toISOString().slice(0, 10);
+      const lastDay = dayKey(f.lastTouch);
       if (lastDay !== day) set.add(lastDay);
       fileDays.set(f.path, set);
       fileEdits.set(f.path, (fileEdits.get(f.path) ?? 0) + f.edits);

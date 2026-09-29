@@ -24,6 +24,14 @@ export interface LaLogConfig {
   captureAiLog: boolean;
   maxDiffChars: number;
   maxStdoutChars: number;
+  /** Days to keep captured file diffs; 0 keeps them forever. Terminal/AI entries never expire. */
+  diffRetentionDays: number;
+  /**
+   * Advanced: manage several projects explicitly. Off by default — LaLog keeps a
+   * single implicit project per workspace (named after the folder, renameable)
+   * that owns all recorded history. See ADR-029.
+   */
+  multiProject: boolean;
 }
 
 const DEFAULTS: LaLogConfig = {
@@ -46,6 +54,8 @@ const DEFAULTS: LaLogConfig = {
   captureAiLog: true,
   maxDiffChars: 16000,
   maxStdoutChars: 32000,
+  diffRetentionDays: 14,
+  multiProject: false,
 };
 
 /** Raw AI-config values read from VS Code settings. */

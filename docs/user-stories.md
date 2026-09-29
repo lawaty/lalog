@@ -297,14 +297,15 @@ Acceptance criteria are the observable, testable conditions that make the story 
 
 **Acceptance criteria**
 - Given the sessions view, then sessions group by start-date day (newest first), the most recent group is expanded by default, and each row shows status icon, project color, start time, workspace, and description.
+- The day a session is filed under is its **local** calendar day, not UTC — a session started at 23:30 belongs to the day the developer experienced it, and the Sessions tab, the insights timeline, and the insights day totals always agree on that day.
 
 ### US-4.4 — Drill into a session
 
-**As a** self-reviewer, **I want** to expand a session, **so that** I can see exactly what happened.
+**As a** self-reviewer, **I want** a full session-detail document, **so that** I can see exactly what happened.
 
 **Acceptance criteria**
-- Given a session row, then expanding it shows description, in/outside-VS-Code split, type, closed reason, time range, event counters, top files, the notes timeline, and git branch/commits.
-- Given an undescribed session, then I can assign a project or toggle background work from the detail actions.
+- Given a session row, then clicking it opens a session-detail markdown document with description, in/outside-VS-Code split, type, closed reason, time range, event counters, top files, timestamped updates, git branch/commits, file changes, terminal commands, and AI interaction metadata.
+- Given an undescribed session, then I can assign a project or toggle background work from the row itself (the project dot and the action row).
 
 ### US-4.5 — Live "Now" box
 
@@ -331,6 +332,15 @@ Acceptance criteria are the observable, testable conditions that make the story 
 - Given the live session, then it cannot be deleted — I'm told to end it first (it is only written to history when it ends).
 - Given an unknown or missing id, then nothing happens (no fallback to the latest session).
 
+### US-4.8 — Scan the session list at a glance
+
+**As a** developer, **I want** a compact session list, **so that** the sidebar answers "what did I do today?" without scrolling.
+
+**Acceptance criteria**
+- Given a session row, then it shows the status icon, project color, start time, workspace, description, and active duration — and nothing else.
+- Given a session with progress-update notes, then one always-visible, timestamped row per note sits under the header (oldest first); the rest of the detail lives in the detail document.
+- Given a session, then at most one extra action row appears: "Not background work anymore" for a background session, or "Keep as background work" for one that still needs a description.
+
 ---
 
 ## 5. Projects
@@ -340,6 +350,7 @@ Acceptance criteria are the observable, testable conditions that make the story 
 **As a** consultant, **I want** to create a project from the workspace I'm in, **so that** I can group related work quickly.
 
 **Acceptance criteria**
+- Requires `lalog.multiProject`.
 - Given the Projects tab, then I can create a project in one click that claims the current workspace.
 
 ### US-5.2 — Group many workspaces under one project
@@ -347,6 +358,7 @@ Acceptance criteria are the observable, testable conditions that make the story 
 **As a** consultant, **I want** several repos/folders to map to one client project, **so that** reporting reflects the client, not the folder.
 
 **Acceptance criteria**
+- Requires `lalog.multiProject`.
 - Given a project, then I can add more claimed workspaces; every session whose workspace is claimed by exactly one non-archived project derives to it.
 
 ### US-5.3 — Override a session's project
@@ -354,6 +366,7 @@ Acceptance criteria are the observable, testable conditions that make the story 
 **As a** developer, **I want** to correct a session's project assignment, **so that** an auto-match never misleads my reports.
 
 **Acceptance criteria**
+- Available in every mode — the per-session assignment picker is never hidden.
 - Given a session, then I can assign it to a specific project; the explicit assignment beats any derived claim (including archived projects).
 
 ### US-5.4 — Archive without losing history
@@ -361,7 +374,28 @@ Acceptance criteria are the observable, testable conditions that make the story 
 **As a** developer, **I want** to archive a finished project, **so that** it stops matching new sessions while history is preserved.
 
 **Acceptance criteria**
+- Requires `lalog.multiProject`.
 - Given I archive a project, then it stops deriving new matches but keeps its history and explicit assignments; I can restore it later.
+
+### US-5.5 — One project per workspace, renameable
+
+**As a** consultant, **I want** LaLog to keep one project for the workspace I have open, **so that** I never have to think about project setup.
+
+**Acceptance criteria**
+- Given a fresh install, then one project is created automatically, named after the open folder.
+- Given the Projects tab, then it shows that project's name, this week's time, session and workspace counts, and a single **Rename…** action — no create/claim/archive buttons.
+- Given I rename it, then the new name appears everywhere (panel, reports, PDF, CSV, insights) on the next refresh.
+- Given I rename or move the folder, then history from the old folder name stays in the project: the project claims the current workspace key *and* every key in my recorded history, so no session is ever orphaned.
+- Given a workspace with several older projects, then they are collapsed into the one project (the folder-named one survives if there is one), the pre-collapse file is kept as `projects.json.pre-collapse.bak`, and sessions explicitly pointing at a removed project are re-pointed at the survivor.
+
+### US-5.6 — Opt in to multiple projects
+
+**As a** consultant who bills several clients, **I want** full project management, **so that** I can split one machine's history by client.
+
+**Acceptance criteria**
+- Given `lalog.multiProject` is off (the default), then nothing is collapsed and the Projects tab stays minimal.
+- Given `lalog.multiProject` is on, then I get the full Projects tab (create, claim, archive/restore, rename) and the automatic single-project collapse is skipped entirely.
+- Known limitation: when a workspace is claimed by more than one project, the first match wins; "Add workspace" is the manual remedy.
 
 ---
 
@@ -372,7 +406,7 @@ Acceptance criteria are the observable, testable conditions that make the story 
 **As a** self-reviewer, **I want** at-a-glance totals, **so that** I understand my time without generating a file.
 
 **Acceptance criteria**
-- Given the Insights tab, then I see active time, in/outside-VS-Code split, session count/average, time by project, time per day, a 24-hour timeline, and top files.
+- Given the Insights tab, then I see active time, in/outside-VS-Code split, session count/average, time by project, a per-day 24-hour timeline with a day total, and top files.
 - Given a live session, then its idle-gap-capped tail is included in today's figures.
 
 ### US-6.2 — Switch periods
@@ -425,6 +459,25 @@ Acceptance criteria are the observable, testable conditions that make the story 
 - Given the `client` preset, then each day starts on a new page; given `personal`, then days flow continuously on one page and everything is included.
 - Given either preset, then the detail checkboxes can still override any single default before the file is written.
 
+### US-6.8 — Read the day at a glance
+
+**As a** self-reviewer, **I want** a per-day timeline with hour slots, totals, and a project filter, **so that** I can find the hour I want to look at without generating a file.
+
+**Acceptance criteria**
+- Given the Insights tab, then the timeline has one row per day, an hour axis above the rows, one colored slot per local hour (23 or 25 slots on a DST day), the day's total at the end of each row, and project filter chips above the chart; there is no separate "time per day" bar list.
+- Given a slot, then its tooltip names every project active in that hour with its time, and clicking it opens the session detail of the single session there — or a picker of sessions when the hour holds more than one.
+- Given a project chip, then only that project's time is counted in the slots, the row totals, and the slot tooltips.
+- Given a day label, then clicking it opens the file diffs for that day (US-6.9).
+
+### US-6.9 — Read the file diffs for a day
+
+**As a** developer, **I want** one document with every file change of a single day, **so that** I can see what I actually touched without opening each session.
+
+**Acceptance criteria**
+- Given "LaLog: Show file diffs for a day" (or a click on a timeline day label), then a markdown document opens titled with the local day, listing each of that day's sessions in start order with its time, workspace, and description, followed by its captured diffs (`+N −M` per save plus the diff body).
+- Given a day with more than 31 days of history, then I am offered the most recent 31 days to choose from.
+- Given a session whose diffs have aged out of the retention window, then the document says so once at the top and once under that session, while the sessions that still have diffs render normally.
+- Given any day, then the document ends with the day's `+added −removed` totals and the number of sessions it covers.
 
 ---
 
@@ -482,6 +535,17 @@ Acceptance criteria are the observable, testable conditions that make the story 
 
 **Acceptance criteria**
 - Given `debugTimeScale`, then all time thresholds divide by that factor consistently.
+
+### US-8.7 — Age out old file diffs
+
+**As a** developer, **I want** captured file diffs to expire, **so that** `~/.lalog/technical/` stays small and the old file contents fall out of the record on their own.
+
+**Acceptance criteria**
+- Given `lalog.diffRetentionDays` (default 14), then on startup every captured `diff` entry older than that many days is removed from its sidecar, and a sidecar left with no entries is deleted.
+- Given terminal and AI-interaction entries, then they are kept forever — only diffs expire.
+- Given a session whose diffs have aged out, then its detail document still shows the terminal commands and AI interactions and explains that the diffs are no longer available.
+- Given `lalog.diffRetentionDays: 0`, then nothing is ever pruned.
+- Given a file in `technical/` that is not a session sidecar, then it is never read or rewritten.
 
 ---
 
@@ -543,11 +607,11 @@ These are deliberately **not** stories LaLog will satisfy. See [Roadmap](roadmap
 | 1. Session Tracking & Time | [Session Tracking](features.md#session-tracking) | [ADR-001](decisions.md#adr-001-sessions-are-not-day-bound), [ADR-003](decisions.md#adr-003-gap-based-active-time-model), [ADR-007](decisions.md#adr-007-auto-close-uses-lastactivityat), [ADR-010](decisions.md#adr-010-the-only-boundary-is-2h-idle), [ADR-012](decisions.md#adr-012-active-only-tracking-with-idle-confirmation), [ADR-022](decisions.md#adr-022-hard-1h-stale-session-cutoff--no-continuation) |
 | 2. Automatic Event Capture | [Automatic Event Capture](features.md#automatic-event-capture) | [ADR-018](decisions.md#adr-018-technical-detail-capture) |
 | 3. Descriptions & Prompts | [Prompt System](features.md#prompt-system) | [ADR-006](decisions.md#adr-006-breakpoint-aligned-prompt-delivery), [ADR-017](decisions.md#adr-017-never-prompt-about-a-closed-session), [ADR-019](decisions.md#adr-019-no-description-prompts-on-close--text-first-describe), [ADR-020](decisions.md#adr-020-remove-the-describe-before-exit-prompt), [ADR-021](decisions.md#adr-021-remove-the-on-start-description-prompt) |
-| 4. User Interface | [User Interface](features.md#user-interface) | [ADR-023](decisions.md#adr-023-confirmed-session-deletion-full-file-rewrite-no-fallback) |
-| 5. Projects | [Projects](features.md#projects) | [ADR-014](decisions.md#adr-014-projects-as-a-derived-workspace-registry) |
-| 6. Insights & Reporting | [Reporting](features.md#reporting) | [ADR-002](decisions.md#adr-002-session-centric-reporting), [ADR-015](decisions.md#adr-015-insights-as-pure-aggregations), [ADR-024](decisions.md#adr-024-hand-rolled-pdf-writer-zero-new-dependencies) |
+| 4. User Interface | [User Interface](features.md#user-interface) | [ADR-023](decisions.md#adr-023-confirmed-session-deletion-full-file-rewrite-no-fallback), [ADR-025](decisions.md#adr-025-session-detail-as-an-untitled-markdown-document) |
+| 5. Projects | [Projects](features.md#projects) | [ADR-014](decisions.md#adr-014-projects-as-a-derived-workspace-registry), [ADR-029](decisions.md#adr-029-a-single-implicit-workspace-project-multi-project-is-opt-in) |
+| 6. Insights & Reporting | [Reporting](features.md#reporting) | [ADR-002](decisions.md#adr-002-session-centric-reporting), [ADR-015](decisions.md#adr-015-insights-as-pure-aggregations), [ADR-024](decisions.md#adr-024-hand-rolled-pdf-writer-zero-new-dependencies), [ADR-027](decisions.md#adr-027-one-local-day-key-everywhere), [ADR-028](decisions.md#adr-028-timeline-slots-carry-session-identity) |
 | 7. Integrations | [Integrations](features.md#integrations) | — |
-| 8. Privacy, Data & Configuration | [Storage & Persistence](features.md#storage--persistence), [Configuration](features.md#configuration) | [ADR-004](decisions.md#adr-004-jsonl-append-only-storage), [ADR-005](decisions.md#adr-005-local-only--zero-telemetry), [ADR-008](decisions.md#adr-008-debugtimescale-for-testing), [ADR-009](decisions.md#adr-009-heartbeat--snapshot-persistence) |
+| 8. Privacy, Data & Configuration | [Storage & Persistence](features.md#storage--persistence), [Configuration](features.md#configuration) | [ADR-004](decisions.md#adr-004-jsonl-append-only-storage), [ADR-005](decisions.md#adr-005-local-only--zero-telemetry), [ADR-008](decisions.md#adr-008-debugtimescale-for-testing), [ADR-009](decisions.md#adr-009-heartbeat--snapshot-persistence), [ADR-026](decisions.md#adr-026-diffs-only-technical-retention) |
 | 9. Optional AI Assistance | [Optional AI Assistance](README.md#optional-ai-assistance) | [ADR-011](decisions.md#adr-011-optional-ai-assistance-amends-adr-005) |
 
 ---

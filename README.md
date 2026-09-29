@@ -13,8 +13,8 @@ You open VS Code and just work. LaLog handles the rest:
 - **Sessions, not timers.** Opening a workspace starts tracking automatically — you are never "untracked." If a session ends (auto-close, manual end) and you keep working, a fresh one starts silently at the next event. A session is a continuous thread, bounded by idle time rather than the clock: an overnight run from 22:00 to 02:00 is one session.
 - **Active-only time.** A session's duration is the sum of its active moments and spans, never `end − start` wall-clock. Idle gaps don't count. If you pop away from your desk and confirm you were actually "still working," that time is counted separately as *outside VS Code*; say "I was away" instead and that idle stretch is trimmed.
 - **Descriptions at the right moments.** The describe checkpoint waits until the ~90-minute mark, and hourly progress notes fill in between. Every entry is a timestamped note on the session — and whether you answer or not, tracking keeps running. Sessions are never asked about on close.
-- **A real drill-down UI.** The sidebar holds three tabs — **Sessions**, **Insights**, **Projects**. Sessions group by day (most recent open by default); expand any session to see its description, active vs. outside-VS-Code split, per-kind event counters, top files, the note timeline, git branch/commits, and to assign it to a project or keep it as anonymous background work. Insights gives you at-a-glance bars for time by project/day, a 24-hour colored timeline, and top files — without opening a file.
-- **Anonymous when you say so.** At any time you can choose **Keep as background work** — from the describe checkpoint, the panel detail action, or the status-bar quick action: the session still tracks everything, but LaLog stops asking for a description. Project your many workspaces onto named, colored **projects** (claimed by folder, overridable per session), then filter, scope reports, and read insights by project.
+- **A real drill-down UI.** The sidebar holds three tabs — **Sessions**, **Insights**, **Projects**. Sessions group by day (most recent open by default); each row is a compact summary (time · workspace — description, duration), and clicking it opens a session-detail document with the in/outside-VS-Code split, event counters, top files, the note timeline, git branch/commits, captured file diffs, terminal commands, and AI interaction metadata. The Insights tab gives at-a-glance totals, a per-day 24-hour timeline you can click to reach the sessions behind an hour, and top files — without opening a file.
+- **Anonymous when you say so.** At any time you can choose **Keep as background work** — from the describe checkpoint, the panel row action, or the status-bar quick action: the session still tracks everything, but LaLog stops asking for a description. Project your many workspaces onto named, colored **projects** (claimed by folder, overridable per session), then filter, scope reports, and read insights by project.
 - **Stops on its own.** "Are you still there?" fires after 15 idle minutes so outside-editor work isn't lost — and abandoned sessions are force-closed after 1 hour of inactivity (no continue option) and a fresh session starts automatically — come back, type one key, and a new session picks up where you left off.
 - **A clock you can act on.** The pinned **Current Session** box runs a live count-up of this session's tracked time (`h:mm:ss`) beside a small world clock, with nothing but pause, resume, and end — because the tracking is always on; ending a session immediately starts a fresh tracked one.
 - **Optional AI, off by default.** When enabled, a local `opencode` CLI drafts descriptions, writes report narratives, and reviews your work. It only ever sees the compact session summary (file paths, counters, branch, commit subjects) — never file contents or terminal output.
@@ -25,17 +25,12 @@ You open VS Code and just work. LaLog handles the rest:
 ```
  SESSIONS
  ▼ 2026-09-03 — 3 sessions, 5h
-   ▼ 10:00 · my-project — Fix login bug
-     Fix login bug
-     Active 2h 30m · in VS Code 2h 20m · outside 10m
-     feature · user · started 10:00
-     edits 142 · saves 23 · terminal 8 · file ops 11 · tasks 3 · debug 2
-     ▼ 3 files worked on
-     ▼ 2 notes
-       wired up the fix                    11:30
-       plan from standup, log took over    10:00
-     git fix/login · 2 commits
+   10:00 · my-project — Fix login bug          2h 30m          ✎ 🗑
+   wired up the fix                             11:30
+   plan from standup, log took over             10:00
 ```
+
+Clicking a row opens that session as a markdown document — description, in/outside-VS-Code split, event counters, top files, notes, git, file changes, terminal, and AI activity — in a preview tab. `LaLog: Show file diffs for a day` does the same for a whole day, and the Insights timeline reaches both.
 
 Reports are session-centric markdown — pick a range (today / yesterday / week / month / any custom span) and a project scope, and single-day reports include an hourly log. Nothing is uploaded anywhere unless you opt into AI.
 
@@ -73,9 +68,14 @@ Data is written to `~/.lalog/`:
 | Keep as background work | `lalog.background` |
 | Generate report | `lalog.report` |
 | Export sessions CSV | `lalog.exportCsv` |
+| Export sessions PDF | `lalog.exportPdf` |
 | Analyze my work (AI) | `lalog.analysis` |
 | Show sessions | `lalog.showSessions` |
 | Edit session | `lalog.editSession` |
+| Delete session | `lalog.deleteSession` |
+| Show session detail | `lalog.sessionDetail` |
+| Show file diffs for a day | `lalog.dayDiffs` |
+| Rename project | `lalog.renameProject` |
 | Export files by day | `lalog.exportFilesByDay` |
 
 ## Key settings
@@ -96,6 +96,8 @@ Data is written to `~/.lalog/`:
 | `lalog.captureTerminalStdout` | boolean | `false` | Capture terminal stdout (opt-in) |
 | `lalog.captureAiLog` | boolean | `true` | Log AI interaction metadata |
 | `lalog.maxDiffChars` | number | `16000` | Max characters per diff entry |
+| `lalog.diffRetentionDays` | `14` | Days to keep captured file diffs (`0` = forever; terminal/AI metadata is always kept) |
+| `lalog.multiProject` | `false` | Advanced: full multi-project management. Off by default — one project per workspace, renameable |
 | `lalog.maxStdoutChars` | number | `32000` | Max characters per terminal stdout |
 
 ## Privacy

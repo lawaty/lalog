@@ -1,5 +1,14 @@
 export type ReportRange = 'today' | 'yesterday' | 'week' | 'month' | 'last-month' | 'custom';
 
+/** Local-calendar day key "YYYY-MM-DD" — THE day-key definition.
+ *  Local, not UTC: a session at 23:30 files under the day the user
+ *  experienced. Zero-padded so lexicographic sort === chronological sort. */
+export function dayKey(ts: number): string {
+  const d = new Date(ts);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
 export function rangeStart(r: ReportRange, now: number): number {
   const d = new Date(now);
   const startOfDay = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();

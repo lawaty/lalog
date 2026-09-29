@@ -9,7 +9,8 @@ import {
   effectiveMs,
   InsightsSnapshot,
 } from '../reporting/insights';
-import { rangeStart, rangeEnd } from '../reporting/ranges';
+import { rangeStart, rangeEnd, dayKey } from '../reporting/ranges';
+import { fmtHM } from '../reporting/sessionDetail';
 
 /**
  * The whole LaLog panel in ONE webview view: tabbed content (Sessions /
@@ -27,6 +28,8 @@ export interface PanelNow {
   wsKey: string;
   wsName: string;
   wsPath: string;
+  /** `lalog.multiProject`: false = one implicit project per workspace (ADR-029). */
+  multiProject: boolean;
 }
 
 export interface ProjectSummary {
@@ -108,7 +111,7 @@ function summarize(s: Session, idleGapMs: number, projects: Project[]): SessionS
 function groupByDay(sessions: Session[], idleGapMs: number, projects: Project[]): DayGroup[] {
   const map = new Map<string, DayGroup>();
   for (const s of sessions) {
-    const day = new Date(s.startedAt).toISOString().slice(0, 10);
+    const day = dayKey(s.startedAt);
     let g = map.get(day);
     if (!g) {
       g = { day, count: 0, totals: 0, sessions: [] };
@@ -208,6 +211,7 @@ export class LaLogPanelProvider implements vscode.WebviewViewProvider {
         sessionCount: sessions.filter((s) => resolveProject(s, projects)?.id === p.id).length,
       })),
       insights: this.insights,
+      multiProject: now.multiProject,
       wsKey: now.wsKey,
       wsName: now.wsName,
       wsPath: now.wsPath,
@@ -225,6 +229,44 @@ export class LaLogPanelProvider implements vscode.WebviewViewProvider {
       case 'delete':
         if (id) void vscode.commands.executeCommand('lalog.deleteSession', id);
         return;
+      case 'openSessionDetail':
+        if (id) void vscode.commands.executeCommand('lalog.sessionDetail', id);
+        return;
+      case 'openHourSessions': {
+        const ids = [
+          ...new Set(
+            (Array.isArray(message.ids) ? message.ids : []).filter((x) => typeof x === 'string')
+          ),
+        ];
+        if (!ids.length) return;
+        if (ids.length === 1) {
+          void vscode.commands.executeCommand('lalog.sessionDetail', ids[0]);
+          return;
+        }
+        const all = await this.getSessions();
+        const active = this.getActive();
+        const pool = active ? [...all, active] : all;
+        const items = ids
+          .map((sid) => pool.find((s) => s.id === sid))
+          .filter((s): s is Session => !!s)
+          .sort((a, b) => a.startedAt - b.startedAt)
+          .map((s) => ({
+            label: `${fmtHM(s.startedAt)} · ${s.workspaceName}${s.description ? ' — ' + s.description : ''}`,
+            id: s.id,
+          }));
+        if (!items.length) return;
+        const pick = await vscode.window.showQuickPick(items, {
+          title: 'Sessions in this hour',
+          placeHolder: 'Open session detail',
+        });
+        if (pick) void vscode.commands.executeCommand('lalog.sessionDetail', pick.id);
+        return;
+      }
+      case 'openDayDiffs': {
+        const day = typeof message.day === 'string' ? message.day : undefined;
+        if (day) void vscode.commands.executeCommand('lalog.dayDiffs', day);
+        return;
+      }
       case 'pause':
         void vscode.commands.executeCommand('lalog.pauseSession');
         return;
@@ -283,6 +325,7 @@ export class LaLogPanelProvider implements vscode.WebviewViewProvider {
         return;
       }
       case 'newProject': {
+        if (!now.multiProject) return;
         const name = await vscode.window.showInputBox({
           title: 'New project',
           placeHolder: 'project name',
@@ -295,20 +338,29 @@ export class LaLogPanelProvider implements vscode.WebviewViewProvider {
         return;
       }
       case 'newProjectFromWorkspace': {
+        if (!now.multiProject) return;
         this.registry.create({ name: now.wsName || 'Project', workspaceKey: now.wsKey, pathHint: now.wsPath });
         this.refresh();
         return;
       }
       case 'claimWorkspace': {
+        if (!now.multiProject) return;
         this.registry.addClaim(String(message.projectId ?? id ?? ''), now.wsKey, now.wsPath);
         this.refresh();
         return;
       }
       case 'archiveProject': {
+        if (!now.multiProject) return;
         if (!id) return;
         const p = this.registry.get(id);
         if (p) this.registry.archive(id, !p.archivedAt);
         this.refresh();
+        return;
+      }
+      case 'renameProject': {
+        // Always available: renaming the single implicit project is the one
+        // project action the default mode needs.
+        if (id) void vscode.commands.executeCommand('lalog.renameProject', id);
         return;
       }
     }
@@ -358,6 +410,7 @@ export class LaLogPanelProvider implements vscode.WebviewViewProvider {
 
   .day { font-weight: 600; display: flex; align-items: center; gap: 6px; padding: 5px 10px 3px; cursor: pointer; }
   .day .caret, .row .caret { width: 12px; flex-shrink: 0; }
+  .day .label { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .row { display: flex; align-items: center; gap: 6px; padding: 3px 10px 3px 22px; cursor: pointer; border-radius: 4px; }
   .row:hover, .day:hover { background: var(--vscode-list-hoverBackground); }
   .row .label { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -365,10 +418,10 @@ export class LaLogPanelProvider implements vscode.WebviewViewProvider {
   .row.warn { color: var(--vscode-list-warningForeground, var(--vscode-editorWarning-foreground)); }
   .row.anon { opacity: .72; }
   .projdot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-  .icon { width: 14px; text-align: center; opacity: .85; flex-shrink: 0; }
+  .icon { min-width: 14px; text-align: center; opacity: .85; flex: 0 0 auto; }
   .hidden { display: none; }
 
-  .detail { padding: 0 10px 4px 34px; color: var(--vscode-descriptionForeground); }
+  .updates { padding: 0 10px 2px 34px; }
   .drow { display: flex; align-items: center; gap: 6px; padding: 2px 0; min-width: 0; flex-wrap: wrap; row-gap: 2px; }
   .drow .label { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
   .drow .half { opacity: .75; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
@@ -432,8 +485,13 @@ export class LaLogPanelProvider implements vscode.WebviewViewProvider {
   .tlwrap { padding: 2px 10px; }
   .tlday { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
   .tlday .label { flex: 0 1 82px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--vscode-descriptionForeground); }
+  .tlday.clickable .label { cursor: pointer; }
+  .tlday.clickable .label:hover { text-decoration: underline; }
   .tlbar { flex: 1; display: flex; gap: 1px; height: 10px; border-radius: 3px; overflow: hidden; }
   .tlcell { flex: 1; }
+  .tlval { flex: 0 0 56px; text-align: right; font-size: 11px; font-variant-numeric: tabular-nums; color: var(--vscode-descriptionForeground); }
+  .tlaxis { display: flex; gap: 1px; }
+  .tlaxis .tlah { flex: 3; font-size: 9px; opacity: .75; }
   .tlkey { display: flex; flex-wrap: wrap; gap: 4px 10px; padding: 4px 10px; font-size: 11px; color: var(--vscode-descriptionForeground); }
   .tlkeyit { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
@@ -489,12 +547,13 @@ export class LaLogPanelProvider implements vscode.WebviewViewProvider {
   const vscode = acquireVsCodeApi();
   const list = document.getElementById('list');
   const el = (id) => document.getElementById(id);
-  const open = { days: new Set(), sessions: new Set(), files: new Set(), notes: new Set() };
+  const open = { days: new Set() };
   const userCollapsed = new Set();
   let lastState = null;
   let activeTab = 'sessions';
   let period = 'week';
   let filterProject = null;
+  let tlFilter = null;
 
   function showLoading(message) {
     const wrap = el2('div', 'loaderwrap');
@@ -624,16 +683,15 @@ export class LaLogPanelProvider implements vscode.WebviewViewProvider {
 
   function sessionNode(s) {
     const wrap = document.createElement('div');
-    const sOpen = open.sessions.has(s.id);
     const cls = 'row' + (s.needsDescription && !s.description && !s.anonymous ? ' warn' : '') + (s.anonymous ? ' anon' : '');
     const header = el2('div', cls);
-    header.appendChild(el2('span', 'caret', sOpen ? '\u25bc' : '\u25b6'));
     header.appendChild(el2('span', 'icon', stateIcon(s)));
-    if (s.projectColor) {
-      const d = el2('span', 'projdot');
-      d.style.background = s.projectColor;
-      header.appendChild(d);
-    }
+    const d = el2('span', 'projdot');
+    d.title = 'Assign project';
+    d.style.cursor = 'pointer';
+    if (s.projectColor) d.style.background = s.projectColor;
+    d.addEventListener('click', (e) => { e.stopPropagation(); vscode.postMessage({ type: 'assign', id: s.id }); });
+    header.appendChild(d);
     const label = fmtHM(s.startedAt) + ' \u00b7 ' + s.workspaceName +
       (s.description ? ' \u2014 ' + s.description : s.anonymous ? ' \u2014 background' : s.needsDescription ? ' \u2014 (needs description)' : '');
     header.appendChild(el2('span', 'label', label));
@@ -646,76 +704,23 @@ export class LaLogPanelProvider implements vscode.WebviewViewProvider {
     delBtn.title = 'Delete session';
     delBtn.addEventListener('click', (e) => { e.stopPropagation(); vscode.postMessage({ type: 'delete', id: s.id }); });
     header.appendChild(delBtn);
-    header.addEventListener('click', () => {
-      if (sOpen) open.sessions.delete(s.id); else open.sessions.add(s.id);
-      renderSessions();
-    });
+    header.title = 'Open session detail';
+    header.addEventListener('click', () => vscode.postMessage({ type: 'openSessionDetail', id: s.id }));
     wrap.appendChild(header);
 
-    if (!sOpen) return wrap;
-    const detail = el2('div', 'detail');
-    if (s.description) detail.appendChild(drow('\u270e', s.description, 'description'));
-    detail.appendChild(drow('\u23f1', 'Active ' + fmtDur(s.split.totalMs), 'in VS Code ' + fmtDur(s.split.vscodeMs) + ' \u00b7 outside VS Code ' + fmtDur(s.split.outsideMs)));
-    if (s.projectName) detail.appendChild(actionRow('\u25cf', 'Project: ' + s.projectName + ' \u00b7 change', () => vscode.postMessage({ type: 'assign', id: s.id })));
-    else detail.appendChild(actionRow('\u25cb', 'No project \u00b7 assign', () => vscode.postMessage({ type: 'assign', id: s.id })));
-    const metaTxt = (s.type || 'untagged') + (s.closedReason ? ' \u00b7 ' + s.closedReason : '') + ' \u00b7 started ' + fmtHM(s.startedAt);
-    detail.appendChild(drow('\ud83d\udee0', metaTxt, s.endedAt ? 'ended ' + fmtHM(s.endedAt) : 'still open'));
-    detail.appendChild(drow('\ud83d\udccb', fmtEvents(s.events), null));
-    if (!s.description) {
-      if (s.anonymous) {
-        detail.appendChild(actionRow('\u270e', 'Not background work anymore (allow prompts)', () => vscode.postMessage({ type: 'markAnonymous', id: s.id, value: false })));
-      } else {
-        detail.appendChild(actionRow('\u25cb', 'Keep as background work', () => vscode.postMessage({ type: 'markAnonymous', id: s.id, value: true })));
-      }
+    // One always-visible row per progress-update note, timestamped.
+    const updates = el2('div', 'updates');
+    for (const n of s.notes.slice().sort((a, b) => a.at - b.at)) {
+      updates.appendChild(drow('\ud83d\udcac', n.text, fmtHM(n.at)));
     }
-    if (s.events.topFiles && s.events.topFiles.length) {
-      detail.appendChild(groupRow('\U0001f4c1', s.events.topFiles.length + ' file' + (s.events.topFiles.length > 1 ? 's' : '') + ' worked on', open.files, s.id + ':files', (wrap2) => {
-        const files = s.events.topFiles.slice().sort((a, b) => b.edits - a.edits);
-        for (const f of files) {
-          wrap2.appendChild(drow('\U0001f4c4', f.path, f.edits + ' edit' + (f.edits === 1 ? '' : 's')));
-        }
-      }));
-    }
-    if (s.notes.length) {
-      detail.appendChild(groupRow('\U0001f4dd', s.notes.length + ' note' + (s.notes.length > 1 ? 's' : ''), open.notes, s.id + ':notes', (wrap2) => {
-        const notes = s.notes.slice().sort((a, b) => a.at - b.at);
-        for (const n of notes) {
-          wrap2.appendChild(drow('\ud83d\udcac', n.text, fmtHM(n.at)));
-        }
-      }));
-    }
-    if (s.gitBranch || s.commits.length) {
-      const gitRow = el2('div', 'drow');
-      gitRow.appendChild(el2('span', 'icon', '\u2387'));
-      const labelEl = el2('span', 'label', 'git ' + (s.gitBranch || '') + ' \u00b7 ' + s.commits.length + ' commit' + (s.commits.length === 1 ? '' : 's'));
-      gitRow.appendChild(labelEl);
-      if (s.commits.length) {
-        const desc = el2('div', 'git-desc', s.commits.join(' \u00b7 '));
-        gitRow.appendChild(desc);
-      }
-      detail.appendChild(gitRow);
-    }
-    wrap.appendChild(detail);
-    return wrap;
-  }
+    wrap.appendChild(updates);
 
-  function groupRow(icon, label, set, key, fn) {
-    const keyOpen = set.has(key);
-    const row = el2('div', 'drow' + (keyOpen ? '' : ' act'));
-    row.appendChild(el2('span', 'caret', keyOpen ? '\u25bc' : '\u25b6'));
-    row.appendChild(el2('span', 'icon', icon));
-    row.appendChild(el2('span', 'label', label));
-    row.style.cursor = 'pointer';
-    row.addEventListener('click', () => {
-      if (keyOpen) set.delete(key); else set.add(key);
-      renderSessions();
-    });
-    if (keyOpen) {
-      const sub = el2('div', 'sub');
-      fn(sub);
-      row.after(sub);
+    if (s.anonymous) {
+      wrap.appendChild(actionRow('\u270e', 'Not background work anymore (allow prompts)', () => vscode.postMessage({ type: 'markAnonymous', id: s.id, value: false })));
+    } else if (s.needsDescription && !s.description) {
+      wrap.appendChild(actionRow('\u25cb', 'Keep as background work', () => vscode.postMessage({ type: 'markAnonymous', id: s.id, value: true })));
     }
-    return row;
+    return wrap;
   }
 
   function drow(icon, label, half) {
@@ -725,9 +730,7 @@ export class LaLogPanelProvider implements vscode.WebviewViewProvider {
     if (label && label.length > 120) l.classList.add('git-desc');
     row.appendChild(l);
     if (half) {
-      const h = el2('span', 'half', half);
-      h.style.flexShrink = '0';
-      row.appendChild(h);
+      row.appendChild(el2('span', 'half', half));
     }
     return row;
   }
@@ -738,14 +741,6 @@ export class LaLogPanelProvider implements vscode.WebviewViewProvider {
     row.appendChild(el2('span', 'label', label));
     row.addEventListener('click', onClick);
     return row;
-  }
-
-  function fmtEvents(e) {
-    const parts = [];
-    const push = (n, w) => { if (n) parts.push(n + ' ' + w); };
-    push(e.edits, 'edits'); push(e.saves, 'saves'); push(e.terminal, 'terminal');
-    push(e.fileops, 'file ops'); push(e.tasks, 'tasks'); push(e.debug, 'debug');
-    return parts.length ? parts.join(' \u00b7 ') : 'no events recorded';
   }
 
   function fmtHM(t) {
@@ -802,38 +797,65 @@ export class LaLogPanelProvider implements vscode.WebviewViewProvider {
       list.appendChild(bar);
     }
 
-    list.appendChild(el2('div', 'sec', 'Time per day'));
-    const maxDay = Math.max(1, ins.byDay[0] ? ins.byDay[0].ms : 1);
-    for (const d of ins.byDay) {
-      const bar = el2('div', 'bar');
-      bar.appendChild(el2('span', 'name', d.day));
-      const track = el2('div', 'track');
-      const fill = el2('div', 'fill');
-      fill.style.background = 'var(--vscode-buttonBackground, #0e639c)';
-      fill.style.width = Math.max(1, Math.round((d.ms / maxDay) * 100)) + '%';
-      track.appendChild(fill);
-      bar.appendChild(track);
-      bar.appendChild(el2('span', 'val', fmtDur(d.ms)));
-      list.appendChild(bar);
-    }
-
     list.appendChild(el2('div', 'sec', 'Timeline'));
     const pal = {};
     for (const p of ins.byProject) pal[p.name] = p.color;
+
+    const chips = el2('div', 'chips');
+    const addChip = (label, dot, key) => {
+      const c = el2('button', 'chip' + (tlFilter === key ? ' on' : ''), label);
+      if (dot) {
+        const d = el2('span', 'chipdot');
+        d.style.background = dot;
+        c.appendChild(d);
+      }
+      c.addEventListener('click', () => {
+        tlFilter = tlFilter === key ? null : key;
+        renderInsights();
+      });
+      chips.appendChild(c);
+    };
+    addChip('All', null, null);
+    for (const p of ins.byProject) addChip(p.name, p.color, p.name);
+    list.appendChild(chips);
+
+    const axis = el2('div', 'tlday tlaxis');
+    axis.appendChild(el2('span', 'label', ''));
+    const axisBar = el2('div', 'tlbar');
+    axisBar.style.height = 'auto';
+    for (let h = 0; h < 24; h += 3) axisBar.appendChild(el2('span', 'tlah', pad2(h) + ':00'));
+    axis.appendChild(axisBar);
+    axis.appendChild(el2('span', 'tlval', ''));
+    list.appendChild(axis);
+
     for (const d of ins.timeline) {
-      const day = el2('div', 'tlday');
-      day.appendChild(el2('span', 'label', d.day));
+      const day = el2('div', 'tlday clickable');
+      const dayLabel = el2('span', 'label', d.day);
+      dayLabel.title = 'File diffs for this day';
+      dayLabel.addEventListener('click', () => vscode.postMessage({ type: 'openDayDiffs', day: d.day }));
+      day.appendChild(dayLabel);
       const bar = el2('div', 'tlbar');
-      for (let h = 0; h < 24; h++) {
+      let dayMs = 0;
+      for (let h = 0; h < d.cells.length; h++) {
         const c = el2('div', 'tlcell');
         const cell = d.cells[h];
-        if (cell && cell.ms > 0) {
-          c.style.background = cell.color || pal[cell.projectName] || '#8a8a8a';
-          c.title = pad2(h) + ':00 \u2014 ' + (cell.projectName || '?') + ' \u00b7 ' + fmtDur(cell.ms);
+        const visible = (cell && cell.parts ? cell.parts : []).filter((p) => !tlFilter || p.projectName === tlFilter);
+        const ms = visible.reduce((sum, p) => sum + p.ms, 0);
+        if (ms > 0) {
+          const dom = visible.slice().sort((a, b) => b.ms - a.ms)[0];
+          c.style.background = pal[dom.projectName] || cell.color || '#8a8a8a';
+          c.style.cursor = 'pointer';
+          c.title = pad2(h) + ':00 \u2014 ' + visible.map((p) => p.projectName + ' ' + fmtDur(p.ms)).join(' \u00b7 ');
+          c.addEventListener('click', () => {
+            const ids = [...new Set(visible.flatMap((p) => p.sessionIds))];
+            if (ids.length) vscode.postMessage({ type: 'openHourSessions', ids });
+          });
         }
+        dayMs += ms;
         bar.appendChild(c);
       }
       day.appendChild(bar);
+      day.appendChild(el2('span', 'tlval', fmtDur(dayMs)));
       list.appendChild(day);
     }
     const used = Object.keys(pal);
@@ -849,7 +871,7 @@ export class LaLogPanelProvider implements vscode.WebviewViewProvider {
     list.appendChild(el2('div', 'sec', 'Top files'));
     if (!ins.topFiles.length) list.appendChild(el2('div', 'ph', 'no file activity recorded'));
     for (const f of ins.topFiles) {
-      list.appendChild(drow('\U0001f4c4', f.path, f.edits + ' edit' + (f.edits === 1 ? '' : 's')));
+      list.appendChild(drow('\ud83d\udcc4', f.path, f.edits + ' edit' + (f.edits === 1 ? '' : 's')));
     }
   }
 
@@ -862,9 +884,50 @@ export class LaLogPanelProvider implements vscode.WebviewViewProvider {
     return r;
   }
 
+  function renameButton(p) {
+    const btn = el2('button', null, 'Rename\u2026');
+    btn.style.flex = '0 1 auto';
+    btn.addEventListener('click', () => vscode.postMessage({ type: 'renameProject', id: p.id }));
+    return btn;
+  }
+
+  function projectHead(p) {
+    const card = el2('div', 'drow');
+    const d = el2('span', 'projdot');
+    d.style.background = p.color;
+    card.appendChild(d);
+    const name = el2('span', 'label', p.name + (p.archived ? ' (archived)' : ''));
+    card.appendChild(name);
+    return card;
+  }
+
+  function projectStats(p) {
+    return el2('div', 'sub', fmtDur(p.weekMs) + ' this week \u00b7 ' + p.sessionCount + ' session' + (p.sessionCount === 1 ? '' : 's') + ' \u00b7 ' + p.workspaceKeys.length + ' workspace' + (p.workspaceKeys.length === 1 ? '' : 's'));
+  }
+
   function renderProjects() {
     const st = lastState;
     list.textContent = '';
+
+    // Default mode (ADR-029): exactly one implicit project per workspace, so
+    // create/claim/archive would be meaningless — the tab is a name + stats
+    // and a rename button. Full management lives behind lalog.multiProject.
+    if (!st.multiProject) {
+      list.appendChild(el2('div', 'sec', 'Project'));
+      if (!st.projects.length) {
+        list.appendChild(el2('div', 'ph', 'No project yet \u2014 one is created for this workspace automatically.'));
+        return;
+      }
+      for (const p of st.projects) {
+        list.appendChild(projectHead(p));
+        list.appendChild(projectStats(p));
+        const r = el2('div', 'drow');
+        r.appendChild(renameButton(p));
+        list.appendChild(r);
+      }
+      return;
+    }
+
     const add = el2('button', null, 'New project\u2026');
     add.addEventListener('click', () => vscode.postMessage({ type: 'newProject' }));
     list.appendChild(addNode(add));
@@ -878,15 +941,9 @@ export class LaLogPanelProvider implements vscode.WebviewViewProvider {
       return;
     }
     for (const p of st.projects) {
-      const card = el2('div', 'drow');
-      const d = el2('span', 'projdot');
-      d.style.background = p.color;
-      card.appendChild(d);
-      const name = el2('span', 'label', p.name + (p.archived ? ' (archived)' : ''));
-      card.appendChild(name);
-      list.appendChild(card);
+      list.appendChild(projectHead(p));
 
-      list.appendChild(el2('div', 'sub', fmtDur(p.weekMs) + ' this week \u00b7 ' + p.sessionCount + ' session' + (p.sessionCount === 1 ? '' : 's') + ' \u00b7 ' + p.workspaceKeys.length + ' workspace' + (p.workspaceKeys.length === 1 ? '' : 's')));
+      list.appendChild(projectStats(p));
       if (p.pathHints.length) {
         list.appendChild(el2('div', 'sub', p.pathHints.join(' \u00b7 ')));
       }
@@ -901,6 +958,7 @@ export class LaLogPanelProvider implements vscode.WebviewViewProvider {
       arch.style.flex = '0 1 auto';
       arch.addEventListener('click', () => vscode.postMessage({ type: 'archiveProject', id: p.id }));
       r.appendChild(arch);
+      r.appendChild(renameButton(p));
       list.appendChild(r);
     }
   }

@@ -4,7 +4,7 @@ import { Session } from '../core/types';
 import { Project, resolveProject, resolveProjectName } from '../core/projects';
 import { effectiveMs, hourlyBreakdown } from './insights';
 import { splitActiveMinutes } from './spans';
-import { ReportRange, rangeStart, rangeEnd, rangeLabel } from './ranges';
+import { ReportRange, rangeStart, rangeEnd, rangeLabel, dayKey } from './ranges';
 import { fmtDuration } from '../prompts/promptCoordinator';
 import { ReportFileOptions, localStamp, safeSlug } from './report';
 import { LaLogPaths } from '../storage/store';
@@ -164,7 +164,7 @@ export function buildPdfModel(
     totalMs += ms;
     vscodeMs += inCode;
     outsideMs += Math.max(0, ms - inCode);
-    const day = localDayKey(s.startedAt);
+    const day = dayKey(s.startedAt);
     const bucket = byDay.get(day);
     if (bucket) bucket.push(s);
     else byDay.set(day, [s]);
@@ -346,12 +346,6 @@ function eventCounters(s: Session): string {
   push(s.events?.tasks, 'task');
   push(s.events?.debug, 'debug');
   return parts.length ? parts.join(' · ') : 'no events recorded';
-}
-
-function localDayKey(t: number): string {
-  const d = new Date(t);
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
 function hm(t: number): string {

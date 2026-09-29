@@ -1,7 +1,7 @@
 import { Session } from '../core/types';
 import { Project, resolveProject, resolveProjectName } from '../core/projects';
 import { splitActiveMinutes } from './spans';
-import { rangeStart, rangeEnd } from './ranges';
+import { rangeStart, rangeEnd, dayKey } from './ranges';
 import { DEFAULT_IDLE_GAP_MS } from '../core/config';
 
 export type InsightRange = 'today' | 'week' | 'month';
@@ -23,10 +23,20 @@ export interface InsightTopFile {
   edits: number;
 }
 
-export interface HourCell {
+/** One project's slice of a single hour cell, with the sessions that produced it. */
+export interface HourPart {
   ms: number;
   projectName: string;
-  color: string;
+  /** Contributing sessions, deduped — the click target for the cell. */
+  sessionIds: string[];
+}
+
+export interface HourCell {
+  ms: number; // dominant part's ms (legacy, unchanged)
+  projectName: string; // dominant project (legacy, unchanged)
+  color: string; // dominant color (legacy, unchanged)
+  /** Per-project slices, sorted ms desc; [] for an empty cell. */
+  parts: HourPart[];
 }
 
 export interface InsightTimelineDay {
@@ -50,12 +60,6 @@ export function effectiveMs(s: Session, now: number, idleGapMs: number): number 
   if (s.endedAt) return s.activeMinutes;
   return s.activeMinutes + Math.max(0, Math.min(now - s.lastActivityAt, idleGapMs));
 }
-
-const dayKey = (t: number): string => {
-  const d = new Date(t);
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-};
 
 /** Start of the LOCAL hour containing t (offsets the collector grid with the day grid). */
 const localHourStart = (t: number): number => {
@@ -128,7 +132,7 @@ export function insightsFor(
   };
 }
 
-/** One row per day in the period; 24 hour cells colored by the dominant project. */
+/** One row per day in the period; one cell per local hour, split per project. */
 function buildTimeline(
   sessions: Session[],
   projects: Project[],
@@ -136,8 +140,8 @@ function buildTimeline(
   end: number,
   idleGapMs: number
 ): InsightTimelineDay[] {
-  // Per day: per-hour accumulated ms by project.
-  const days = new Map<string, Map<number, Map<string, { ms: number; color: string }>>>();
+  // Per day: per-hour accumulated ms by project, with the sessions behind it.
+  const days = new Map<string, Map<number, Map<string, { ms: number; color: string; sessionIds: Set<string> }>>>();
   for (const s of sessions) {
     const proj = resolveProject(s, projects);
     const name = proj?.name ?? s.workspaceName;
@@ -168,8 +172,12 @@ function buildTimeline(
           hours.set(hourStart, projHours);
         }
         const cur = projHours.get(name);
-        if (cur) cur.ms += segEnd - cursor;
-        else projHours.set(name, { ms: segEnd - cursor, color });
+        if (cur) {
+          cur.ms += segEnd - cursor;
+          cur.sessionIds.add(s.id);
+        } else {
+          projHours.set(name, { ms: segEnd - cursor, color, sessionIds: new Set([s.id]) });
+        }
         cursor = segEnd;
       }
     }
@@ -189,11 +197,18 @@ function buildTimeline(
         const hourStart = localHourStart(cursor);
         const bucket = hours.get(hourStart);
         if (!bucket) {
-          cells.push({ ms: 0, projectName: '', color: 'transparent' });
+          cells.push({ ms: 0, projectName: '', color: 'transparent', parts: [] });
         } else {
-          const dominantName = [...bucket.entries()].sort((a, b) => b[1].ms - a[1].ms)[0][0];
-          const dominant = bucket.get(dominantName)!;
-          cells.push({ ms: dominant.ms, projectName: dominantName, color: dominant.color });
+          const parts: HourPart[] = [...bucket.entries()]
+            .map(([projectName, v]) => ({ ms: v.ms, projectName, sessionIds: [...v.sessionIds] }))
+            .sort((a, b) => b.ms - a.ms);
+          const dominant = parts[0];
+          cells.push({
+            ms: dominant.ms,
+            projectName: dominant.projectName,
+            color: bucket.get(dominant.projectName)!.color,
+            parts,
+          });
         }
         cursor = hourStart + 3600000;
       }
