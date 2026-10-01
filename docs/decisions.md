@@ -37,6 +37,7 @@
 - [ADR-027: One Local Day Key Everywhere](#adr-027-one-local-day-key-everywhere)
 - [ADR-028: Timeline Slots Carry Session Identity](#adr-028-timeline-slots-carry-session-identity)
 - [ADR-029: A Single Implicit Workspace Project; Multi-Project Is Opt-In](#adr-029-a-single-implicit-workspace-project-multi-project-is-opt-in)
+- [ADR-030: Per-Workspace Projects Replace the Single-Project Union](#adr-030-per-workspace-projects-replace-the-single-project-union)
 
 ---
 
@@ -734,7 +735,7 @@ export function thresholdsMs(cfg: WorklogConfig): ThresholdsMs {
 
 ## ADR-029: A Single Implicit Workspace Project; Multi-Project Is Opt-In
 
-**Status**: Accepted
+**Status**: Superseded by [ADR-030](#adr-030-per-workspace-projects-replace-the-single-project-union) (the union/collapse behavior below is no longer how the default mode works; this record stays as the historical rationale)
 
 **Context**: Projects were a full management surface (create / claim / archive) that nobody had asked for, and the derived model had a sharp edge. `resolveProject` matches `session.workspaceKey` against a project's claims with **no basename fallback**, so renaming or moving the folder you work in produces a *new* workspace key: every historical session silently stops resolving, and — because the common case is "two folders, two projects, one of them historical" — a naive auto-create claiming only the *current* key would orphan the history. The user hit exactly this: `worklog` held the history, the folder is now `lalog`, and both appeared in the panel.
 
@@ -755,6 +756,33 @@ export function thresholdsMs(cfg: WorklogConfig): ThresholdsMs {
 **Implementation**: `src/storage/projectRegistry.ts` (`EnsureSingleOpts`, `EnsureSingleResult`, `ensureSingleProject`), `src/extension.ts` (activation migration between `manager.start()` and the first `refreshStatus()`, `lalog.renameProject`), `src/core/config.ts` + `package.json` (`lalog.multiProject`), `src/ui/panelView.ts` (`PanelNow.multiProject`, payload flag, gated handlers, `renderProjects` branch).
 
 **Test coverage**: `test/userStories/projects.test.ts` — US-5.5 (registry: create-from-empty, one-project claim/restore with the name untouched, name-match survivor + backup, oldest-live survivor, idempotency across three calls; activation: the rename round-trip with a pre-seeded `worklog`/`lalog` registry and a pre-seeded `sessions.jsonl`, asserting one project named `lalog` claiming both keys, the two-project backup, the re-pointed session, the resolution of the old-key session, and the panel payload; and the gated Projects tab); US-5.6 (`lalog.multiProject: true` keeps both projects, writes no backup, reports the flag, and still allows `newProjectFromWorkspace`).
+
+---
+
+## ADR-030: Per-Workspace Projects Replace the Single-Project Union
+
+**Status**: Accepted
+
+**Context**: ADR-029 solved folder renames by unioning, but it had the side effect of making *every* workspace on the host share one project. With five workspaces open over time, `ensureSingleProject` claimed all of their keys into a single record, so every session resolved to whichever project was created first — the user saw one project called `lalog` containing Daftra work, unrelated repos, everything. The naming was also wrong: the project was labelled after whichever folder happened to be opened, not after the workspace the user is actually in. Meanwhile `Session.workspaceName` (the VS Code `folder.name` recorded at session time) was already correct per workspace — only the *project* was shared.
+
+**Decision**:
+1. **One project per workspace.** `ensureWorkspaceProject` finds the project that claims the current `workspaceKey` (un-archiving it, attaching the path hint, tracking the name) or creates one named from the VS Code workspace name. Other projects are never collapsed, their keys never unioned, nothing is ever dropped.
+2. **The default name is the VS Code workspace name**, resolved as `vscode.workspace.name ?? workspaceFolders[0].name ?? basename(wsPath)`. A single-file window has no `workspace.name`, so it falls back to the folder basename; a `.code-workspace` / multi-root window gets the `.code-workspace` name (e.g. `Daftra Consulting`), which is exactly the name the user sees in the title bar.
+3. **`nameSource: 'auto' | 'user'` decides who owns the name.** Records created by `create()` are `'auto'` and may be renamed live to follow the workspace (`setNameTracked`); `lalog.renameProject` sets `'user'` and the name is then never touched again. A **missing** flag reads as `'user'` for *renaming* — LaLog never stomps a name it did not generate — but as *splittable* for the one-time migration below, because every real 0.6.0 record predates the flag. The two readings are consistent: conservatism about names, authorization for the migration.
+4. **No global union — a folder rename is a new identity.** Renaming `lalog/` to `lalog2/` produces a new workspace key: old sessions keep resolving to the old project, new sessions get the new one. This is deliberate: guessing that two paths are "the same" work (sibling-path heuristics, key unioning) is what produced the single-project mess. Users reconcile manually by renaming, or by assigning sessions explicitly.
+5. **One-time split migration, not a collapse.** If the registry holds exactly one **flag-less** (pre-0.7) project claiming several keys, it is split into one project per key: each is named from the most recent session `workspaceName` of that key, its matching `pathHint` (basename equals the name) is attached, and the old id/color are dropped. Keys with no session and no matching hint are skipped. `~/.lalog/projects.json.pre-split.bak` holds the collapsed file byte-for-byte, written once, and a single atomic write lands the whole split (no partial intermediate file). Idempotent by construction: the next activation sees more than one project, so the guard fails. Records written after 0.7 always carry `nameSource`, so a multi-key `'auto'`/`'user'` project there is a deliberate union and is never split.
+6. **Dangling explicit assignments are healed per key.** After the split, a session whose `projectId` points at a removed record is re-pointed at whichever project claims *its own* workspace key (not at one global survivor), via `updateSession`. The live-session heal of ADR-029 is gone — there is no survivor to heal towards.
+7. **Opt-in multi-project is unchanged.** `lalog.multiProject: true` still skips the whole thing and keeps the full management surface.
+
+**Rationale**:
+- The registry lives in one global file, so "one project per workspace" is a per-machine model that happens to be keyed by workspace identity — no scoping rework, no new storage.
+- Names should come from the place the user already names things: the VS Code window. Deriving from `folder.name` (and, when present, the `.code-workspace` name) makes the Projects tab legible in a multi-root window.
+- Splitting rather than collapsing keeps the migration reversible: the pre-split backup is the original file, and sessions are only re-pointed when their key has an unambiguous new owner. Because `nameSource` did not exist in 0.6.0, a user who hand-**renamed** the collapsed project left no `'user'` trace, so such a record still splits — a known limitation, recoverable from `projects.json.pre-split.bak` plus a rename.
+- Reporting is untouched — project names still resolve at render time (`resolveProject` / `resolveProjectName`), so the split shows up in the panel, reports, PDF, CSV and insights on the next refresh with no extra wiring.
+
+**Implementation**: `src/core/projects.ts` (`Project.nameSource`, `isAutoNamed`), `src/storage/projectRegistry.ts` (`EnsureWorkspaceOpts`/`EnsureWorkspaceResult`, `ensureWorkspaceProject`, private `splitLegacyCollapse`, `setNameTracked`, `rename` marking `'user'`, `create` marking `'auto'`), `src/extension.ts` (activation block between `manager.start()` and the first `refreshStatus()`; `lalog.renameProject` unchanged externally), `test/helpers/mockVscode.ts` (`workspace.name` + `setWorkspaceName`), `test/helpers/harness.ts` (`vscWorkspaceName` opt).
+
+**Test coverage**: `test/userStories/projects.test.ts` — US-5.5 (registry: create-from-empty never absorbing another workspace's history key, exact auto-name tracking with un-archive + path hint, user/flag-less names kept, several projects never collapsed, the legacy split incl. a skipped key / backup / idempotency across three calls, a user-named collapsed record never split, flag-carrying multi-key unions never split in either mode, a renamed folder becoming a new identity while the old project is preserved; activation: the VS Code workspace name as the default and the folder-basename fallback, the rename command marking `'user'` and surviving a later activation, the collapsed-data regression where each workspace's sessions resolve to their own project and the dangling `projectId`s are re-pointed per key, and activation never re-pointing an explicit assignment that already resolves; panel: single mode pushing only the current window's project) and US-5.6 (multi mode keeps both projects, writes no backup, reports the flag, still allows `newProjectFromWorkspace`).
 
 ---
 

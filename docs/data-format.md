@@ -26,7 +26,8 @@ All data is stored in `~/.lalog/` (configurable via `lalog.dataDir`):
 ~/.lalog/
 ├── sessions.jsonl              # All closed sessions (append-only)
 ├── projects.json               # Curated project registry (rewritten atomically)
-├── projects.json.pre-collapse.bak  # Written once if multi-project was collapsed into one
+├── projects.json.pre-split.bak  # Written once if a collapsed single project was split per workspace
+├── projects.json.pre-collapse.bak  # Legacy 0.6.0 backup; may coexist, never rewritten
 ├── active/
 │   ├── <wsKey>.json            # Active session snapshot per workspace
 │   └── <wsKey>.json.tmp        # Temporary file during atomic write
@@ -201,6 +202,9 @@ interface Project {
   pathHints: string[];        // human-readable folder examples for the UI (never matched)
   createdAt: number;          // ms epoch
   archivedAt?: number;        // set → excluded from derivation (explicit assignments stay)
+  nameSource?: 'auto' | 'user'; // who owns the name: 'auto' = derived from the VS Code workspace
+                                 // and may follow it; 'user' = explicit rename, never auto-changed.
+                                 // Absent (pre-0.7 records) reads as 'user'.
 }
 ```
 
@@ -214,33 +218,34 @@ interface Project {
       "id": "prj_1a2b3c4d",
       "name": "LaLog",
       "color": "#2ea043",
-      "workspaceKeys": ["a1b2c3d4e5", "f6a7b8c9d0"],
-      "pathHints": ["/home/lawaty/Projects/worklog"],
-      "createdAt": 1725397200000
+      "workspaceKeys": ["a1b2c3d4e5"],
+      "pathHints": ["/home/lawaty/Projects/lalog"],
+      "createdAt": 1725397200000,
+      "nameSource": "auto"
     }
   ]
 }
 ```
 
-**Resolution rule** (`resolveProject`, pure): an explicit `session.projectId` wins; otherwise a session belongs to the first **non-archived** project claiming its `workspaceKey`; otherwise it's unassigned. There is **no basename fallback** — only claims count, which is why the single-project migration below grows the claim set instead of relying on the folder name.
+**Resolution rule** (`resolveProject`, pure): an explicit `session.projectId` wins; otherwise a session belongs to the first **non-archived** project claiming its `workspaceKey`; otherwise it's unassigned. There is **no basename fallback** and **no cross-workspace fallback** — only claims count, which is why the per-workspace migration below resolves one project for the window that is open and never borrows another workspace's key.
 
-### Single implicit project (default, `lalog.multiProject: false`)
+### One project per workspace (default, `lalog.multiProject: false`)
 
-On every activation, before the first render, `ProjectRegistry.ensureSingleProject` makes the registry hold exactly one project for the open workspace (ADR-029):
+On every activation, before the first render, `ProjectRegistry.ensureWorkspaceProject` resolves the project for the open workspace (ADR-030). Two steps:
 
-| Projects found | Result |
+| Registry state | Result |
 |----------------|--------|
-| 0 | Create one named after the open folder, claiming the current `workspaceKey` + `wsPath` |
-| 1 | Un-archive it, add the current `workspaceKey` + `wsPath` + every key found in `sessions.jsonl`; **the name is never changed** |
-| 2+ | Pick a survivor — name equal to the folder name, else oldest non-archived, else oldest — union every other project's `workspaceKeys` and `pathHints` into it (plus the current key/path and all history keys), un-archive it, remove the rest |
+| One collapsed, **flag-less** (pre-0.7) project claiming several keys — the ADR-029 collapse artifact | **Split** it into one project per key (see below), then continue |
+| A project claims the current `workspaceKey` | Un-archive it, attach `wsPath` as a `pathHint`, and if `nameSource === 'auto'` and the name differs, rename it to the VS Code workspace name (`setNameTracked`) |
+| No project claims the current `workspaceKey` | Create one named `vscode.workspace.name ?? workspaceFolders[0].name ?? basename(wsPath)`, claiming `workspaceKey` + `wsPath` |
 
-The survivor keeps its own `id`, `color` and `createdAt`.
+Other projects are never collapsed, never unioned with this workspace's key, and never removed.
 
-**Backup**: when a collapse happens, `~/.lalog/projects.json.pre-collapse.bak` is written **once** (only if it does not already exist), holding the original multi-project file byte-for-byte. Later activations never rewrite it, so the earliest pre-collapse state is the one that survives. The `projects.json` schema is unchanged — there is no version marker, because the collapse is idempotent and safe to re-run.
+**The one-time split.** Runs only while the registry holds exactly one pre-0.7 (flag-less) project claiming several keys — post-0.7 records always carry `nameSource`, so a multi-key project there is a deliberate union and is never split. For each claimed key: `name` = the `workspaceName` of that key's most recent session (fallback `'Workspace'`); the first still-unused `pathHint` whose basename equals that name is attached; a key with **no session and no matching hint** is skipped. The split projects are new records (`prj_…`, fresh color, `nameSource: 'auto'`) — the collapsed `id`/`color` are not preserved, and the whole split lands in a **single atomic write** (no partial intermediate file — a crash before it simply re-runs next activation). `~/.lalog/projects.json.pre-split.bak` holds the collapsed file byte-for-byte and is written **once** (only if it does not already exist). Idempotent: the next activation sees more than one project, so the guard fails. The `projects.json` schema is unchanged — no version marker, because the split is safe to re-run.
 
-**Session re-pointing**: any `sessions.jsonl` line whose `projectId` refers to a project removed by the collapse is rewritten (full-file rewrite, as in US-4.7) to the survivor's id. Sessions with no `projectId` need no rewrite: they resolve through the survivor's claims, which now include every key in the recorded history — so a renamed or moved folder keeps its history.
+**Session re-pointing**: after the split, any `sessions.jsonl` line whose `projectId` refers to a removed record is rewritten (full-file rewrite, as in US-4.7) to the id of whichever project claims **that session's own** `workspaceKey` — one project per workspace, not one global survivor. Sessions with no `projectId` need no rewrite: they resolve through their own workspace's claim.
 
-With `lalog.multiProject: true` the whole migration is skipped: nothing is collapsed, no backup is written, and a workspace claimed by several projects still resolves to the first match (known limitation).
+With `lalog.multiProject: true` the whole migration is skipped: nothing is split or named automatically, no backup is written, and a workspace claimed by several projects still resolves to the first match (known limitation).
 
 ---
 

@@ -6,7 +6,7 @@ Local-first VS Code work-session tracker. Extension entry is `src/extension.ts`;
 
 | Area | Files | What lives there |
 |------|-------|------------------|
-| **Entry / wiring** | `src/extension.ts` | `activate()`/`deactivate()`, command registration (`lalog.sessionDetail` / `lalog.dayDiffs` / `lalog.renameProject` among them), status bar, event subscriptions (terminal/editor listeners), activation sweeps (diffs-only retention, single-project migration), AI bridge + git annotation wiring |
+| **Entry / wiring** | `src/extension.ts` | `activate()`/`deactivate()`, command registration (`lalog.sessionDetail` / `lalog.dayDiffs` / `lalog.renameProject` among them), status bar, event subscriptions (terminal/editor listeners), activation sweeps (diffs-only retention, per-workspace project resolution + `.pre-split.bak` split + dangling-`projectId` heal), AI bridge + git annotation wiring |
 | **Orchestrator** | `src/core/sessionManager.ts` | The big one. Session lifecycle: `openWorkspace`, `endSession`, `startFresh`, `endAndRestart`, heartbeat (`checkIdle`, `checkAutoEnd`, `checkProgress`), prompt scheduling (`presentDescribe`, `presentWrap`, breakpoints), describe application (`applyDescribeResult`, `applyBackgroundWork`), recovery (`finishRecovered`), technical-capture wiring |
 | **Pure state machine** | `src/core/stateMachine.ts` | `Machine`, `onActivity`, `startSession`, `autoClose`. Transitions to `describePending` (≥90 active min), `wrapPending` (≥210), `grace`, hard split at 5h |
 | **Prompts (UI)** | `src/prompts/promptCoordinator.ts` | Mutex + min-spacing (`acquire`/`release`), `askWrap`, `askProgressUpdate`, `askStillWorking`. No prompt asks on close (ADR-019) |
@@ -18,7 +18,7 @@ Local-first VS Code work-session tracker. Extension entry is `src/extension.ts`;
 | **Spans** | `src/core/spans.ts` | Active-time span building, gap-based accrual, `trimToCutoff` (used at idle-end), outside-VS-Code classification |
 | **Storage** | `src/storage/store.ts` | FS primitives (`appendLine`, atomic rename), `workspaceKey`, `LaLogPaths` |
 | | `src/storage/sessionStore.ts` | Session CRUD: `newSession`, `saveActive` (60s snapshots), `close` → `sessions.jsonl`, `loadActive`, `updateSession`, `deleteSession` |
-| | `src/storage/projectRegistry.ts` | `projects.json` — claim folders, explicit session assignment, derive-on-read, plus `ensureSingleProject` (single implicit project + collapse migration) |
+| | `src/storage/projectRegistry.ts` | `projects.json` — claim folders, explicit session assignment, derive-on-read, plus `ensureWorkspaceProject` (one project per workspace, named from `vscode.workspace.name`; `setNameTracked`/`rename` own the `nameSource: 'auto' \| 'user'` flag) |
 | | `src/storage/technicalStore.ts` | Per-session sidecar JSONL (`technical/<id>.jsonl`) with rotation, and `pruneDiffEntriesBefore` (diffs-only retention; terminal/AI entries kept forever) |
 | **Technical capture** | `src/capture/diffCapture.ts` | Unified diffs at save (redacted, capped at `maxDiffChars`) |
 | | `src/capture/terminalCapture.ts` | Shell-integration command/stdout capture (`read()` to async iterator), ANSI strip |

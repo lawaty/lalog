@@ -341,7 +341,7 @@ Projects give many workspaces a single name and color. They live in a curated `~
 - **Explicit override** — a session can be assigned to a specific project from its panel row (beats any derived claim, including archived projects)
 - Sessions with no match appear under the **Unassigned** filter chip
 
-The **Projects tab** lists every project with its color, this-week time, session count, and the folders it claims. Create a project from the current workspace in one click, add more workspaces to it, or archive/restore it. Archived projects stop matching sessions but keep their history and their explicitly-assigned sessions.
+The **Projects tab** lists every project with its color, this-week time, session count, and the folders it claims. By default each workspace you open gets its own project, named after the VS Code workspace (the `.code-workspace` name in a multi-root window, otherwise the folder name) and renameable from that card — a rename sticks and is never changed again. Full management (create a project from the current workspace in one click, add more workspaces to a project, archive/restore) lives behind `lalog.multiProject`. Archived projects stop matching sessions but keep their history and their explicitly-assigned sessions.
 
 Projects feed the Insights bar chart, the report scoping picker, and the colored dots next to sessions.
 

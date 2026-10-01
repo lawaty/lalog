@@ -610,30 +610,30 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   manager.start();
 
-  // Single implicit workspace project (ADR-029). The registry collapse is a
-  // synchronous file rewrite, so no render ever sees a half-written projects.json;
-  // a transient earlier panel push may still show the pre-migration registry until
-  // the next refresh, which is harmless and self-correcting. Idempotent: safe on
-  // every activation.
+  // Per-workspace project (ADR-030). Every distinct workspace gets its own
+  // project, named from the VS Code workspace name; an already-collapsed legacy
+  // record is split once. Both steps are synchronous file rewrites, so no render
+  // ever sees a half-written projects.json. Idempotent: safe on every activation.
   if (!cfg.multiProject) {
     const folder = vscode.workspace.workspaceFolders?.[0];
     if (folder) {
       const wsPath = folder.uri.fsPath;
       const history = await store.loadAll();
-      const res = projectRegistry.ensureSingleProject({
+      projectRegistry.ensureWorkspaceProject({
         wsKey: workspaceKey(wsPath),
         wsPath,
-        fallbackName: workspaceName(wsPath),
-        historyKeys: [...new Set(history.map((s) => s.workspaceKey))],
+        vscName: vscode.workspace.name ?? folder.name ?? workspaceName(wsPath),
+        history,
       });
+      // Heal dangling explicit assignments: a session whose projectId is unknown
+      // is re-pointed at whichever project claims ITS OWN workspace key.
       const known = new Set(projectRegistry.list().map((p) => p.id));
       for (const s of history) {
         if (s.projectId && !known.has(s.projectId)) {
-          await store.updateSession(s.id, { projectId: res.project.id });
+          const owner = projectRegistry.list().find((p) => p.workspaceKeys.includes(s.workspaceKey));
+          if (owner) await store.updateSession(s.id, { projectId: owner.id });
         }
       }
-      const live = manager.getSession();
-      if (live?.projectId && !known.has(live.projectId)) manager.assignProject(res.project.id);
     }
   }
 

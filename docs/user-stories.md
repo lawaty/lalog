@@ -377,24 +377,26 @@ Acceptance criteria are the observable, testable conditions that make the story 
 - Requires `lalog.multiProject`.
 - Given I archive a project, then it stops deriving new matches but keeps its history and explicit assignments; I can restore it later.
 
-### US-5.5 — One project per workspace, renameable
+### US-5.5 — One project per workspace, named after it, renameable
 
-**As a** consultant, **I want** LaLog to keep one project for the workspace I have open, **so that** I never have to think about project setup.
+**As a** consultant, **I want** LaLog to keep one project per workspace I work in, **so that** I never have to think about project setup and my projects actually mean something.
 
 **Acceptance criteria**
-- Given a fresh install, then one project is created automatically, named after the open folder.
+- Given a fresh install, then one project is created automatically for this workspace, named after the VS Code workspace (the `.code-workspace` name in a multi-root window, otherwise the folder name).
 - Given the Projects tab, then it shows that project's name, this week's time, session and workspace counts, and a single **Rename…** action — no create/claim/archive buttons.
-- Given I rename it, then the new name appears everywhere (panel, reports, PDF, CSV, insights) on the next refresh.
-- Given I rename or move the folder, then history from the old folder name stays in the project: the project claims the current workspace key *and* every key in my recorded history, so no session is ever orphaned.
-- Given a workspace with several older projects, then they are collapsed into the one project (the folder-named one survives if there is one), the pre-collapse file is kept as `projects.json.pre-collapse.bak`, and sessions explicitly pointing at a removed project are re-pointed at the survivor.
+- Given I rename it, then the new name appears everywhere (panel, reports, PDF, CSV, insights) on the next refresh **and stays**: a renamed project is mine, so it is never renamed again even if the workspace is renamed.
+- Given I have several workspaces, then each has its own project with its own name and its own sessions — sessions from one workspace never show up under another workspace's project.
+- Given I rename or move the folder, then that is a new workspace: history stays with the old project and new sessions go to the new one, and I reconcile with **Rename…** if I want them under one name.
+- Given my data was collapsed into a single project by an earlier version, then it is split once into one project per workspace (named from that workspace's own history), the collapsed file is kept as `projects.json.pre-split.bak`, and sessions explicitly pointing at the old project are re-pointed at the project that owns their workspace.
+- Known trade-off: an auto-named project follows its workspace, so it can be renamed when you open the folder under a new name. Rename it once to pin the name.
 
 ### US-5.6 — Opt in to multiple projects
 
 **As a** consultant who bills several clients, **I want** full project management, **so that** I can split one machine's history by client.
 
 **Acceptance criteria**
-- Given `lalog.multiProject` is off (the default), then nothing is collapsed and the Projects tab stays minimal.
-- Given `lalog.multiProject` is on, then I get the full Projects tab (create, claim, archive/restore, rename) and the automatic single-project collapse is skipped entirely.
+- Given `lalog.multiProject` is off (the default), then each workspace keeps its own project (nothing is collapsed or unioned) and the Projects tab stays minimal.
+- Given `lalog.multiProject` is on, then I get the full Projects tab (create, claim, archive/restore, rename) and the automatic per-workspace naming/split is skipped entirely.
 - Known limitation: when a workspace is claimed by more than one project, the first match wins; "Add workspace" is the manual remedy.
 
 ---
@@ -608,7 +610,7 @@ These are deliberately **not** stories LaLog will satisfy. See [Roadmap](roadmap
 | 2. Automatic Event Capture | [Automatic Event Capture](features.md#automatic-event-capture) | [ADR-018](decisions.md#adr-018-technical-detail-capture) |
 | 3. Descriptions & Prompts | [Prompt System](features.md#prompt-system) | [ADR-006](decisions.md#adr-006-breakpoint-aligned-prompt-delivery), [ADR-017](decisions.md#adr-017-never-prompt-about-a-closed-session), [ADR-019](decisions.md#adr-019-no-description-prompts-on-close--text-first-describe), [ADR-020](decisions.md#adr-020-remove-the-describe-before-exit-prompt), [ADR-021](decisions.md#adr-021-remove-the-on-start-description-prompt) |
 | 4. User Interface | [User Interface](features.md#user-interface) | [ADR-023](decisions.md#adr-023-confirmed-session-deletion-full-file-rewrite-no-fallback), [ADR-025](decisions.md#adr-025-session-detail-as-an-untitled-markdown-document) |
-| 5. Projects | [Projects](features.md#projects) | [ADR-014](decisions.md#adr-014-projects-as-a-derived-workspace-registry), [ADR-029](decisions.md#adr-029-a-single-implicit-workspace-project-multi-project-is-opt-in) |
+| 5. Projects | [Projects](features.md#projects) | [ADR-014](decisions.md#adr-014-projects-as-a-derived-workspace-registry), [ADR-029](decisions.md#adr-029-a-single-implicit-workspace-project-multi-project-is-opt-in), [ADR-030](decisions.md#adr-030-per-workspace-projects-replace-the-single-project-union) |
 | 6. Insights & Reporting | [Reporting](features.md#reporting) | [ADR-002](decisions.md#adr-002-session-centric-reporting), [ADR-015](decisions.md#adr-015-insights-as-pure-aggregations), [ADR-024](decisions.md#adr-024-hand-rolled-pdf-writer-zero-new-dependencies), [ADR-027](decisions.md#adr-027-one-local-day-key-everywhere), [ADR-028](decisions.md#adr-028-timeline-slots-carry-session-identity) |
 | 7. Integrations | [Integrations](features.md#integrations) | — |
 | 8. Privacy, Data & Configuration | [Storage & Persistence](features.md#storage--persistence), [Configuration](features.md#configuration) | [ADR-004](decisions.md#adr-004-jsonl-append-only-storage), [ADR-005](decisions.md#adr-005-local-only--zero-telemetry), [ADR-008](decisions.md#adr-008-debugtimescale-for-testing), [ADR-009](decisions.md#adr-009-heartbeat--snapshot-persistence), [ADR-026](decisions.md#adr-026-diffs-only-technical-retention) |

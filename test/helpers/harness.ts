@@ -92,7 +92,13 @@ export interface Harness {
 
 export function createHarness(
   t: TestContext,
-  opts: { config?: Partial<LaLogConfig>; wsPath?: string; dir?: string } = {}
+  opts: {
+    config?: Partial<LaLogConfig>;
+    wsPath?: string;
+    dir?: string;
+    /** `vscode.workspace.name` for the window; undefined = single-folder window. */
+    vscWorkspaceName?: string;
+  } = {}
 ): Harness {
   const cfg = defaultConfig(opts.config);
   const dir = opts.dir ?? fs.mkdtempSync(path.join(os.tmpdir(), 'lalog-harness-'));
@@ -105,7 +111,7 @@ export function createHarness(
   fs.mkdirSync(wsPath, { recursive: true });
   const wsKey = workspaceKey(wsPath);
   const wsName = path.basename(wsPath);
-  mockVscode.setWorkspaceFolders([wsPath]);
+  mockVscode.setWorkspaceFolders([wsPath], { name: opts.vscWorkspaceName });
   const manager = new SessionManager(store, th, paths, cfg, techStore);
 
   const h: Harness = {
@@ -197,7 +203,12 @@ export function createHarness(
 
 export function setupHarness(
   t: TestContext,
-  opts: { config?: Partial<LaLogConfig>; wsPath?: string; dir?: string } = {}
+  opts: {
+    config?: Partial<LaLogConfig>;
+    wsPath?: string;
+    dir?: string;
+    vscWorkspaceName?: string;
+  } = {}
 ): Harness {
   t.mock.timers.enable({ apis: ['Date', 'setTimeout', 'setInterval'] });
   t.mock.timers.setTime(BASE_TIME);
@@ -240,6 +251,8 @@ export async function activateExtension(
     dir?: string;
     /** Workspace folder to report; defaults to `<dir>/workspace`. */
     wsPath?: string;
+    /** `vscode.workspace.name` for the window; undefined = single-folder window. */
+    vscWorkspaceName?: string;
   } = {}
 ): Promise<{ ctx: any; paths: LaLogPaths; th: ThresholdsMs; dir: string; wsPath: string }> {
   const cfg = defaultConfig(opts.config);
@@ -257,7 +270,7 @@ export async function activateExtension(
   });
   const wsPath = opts.wsPath ?? path.join(dir, 'workspace');
   fs.mkdirSync(wsPath, { recursive: true });
-  mockVscode.setWorkspaceFolders([wsPath]);
+  mockVscode.setWorkspaceFolders([wsPath], { name: opts.vscWorkspaceName });
   const ctx = {
     subscriptions: [] as any[],
     globalState: { get: () => undefined, update: async () => undefined },
@@ -275,6 +288,7 @@ export async function setupExtension(
     ai?: Partial<AiConfig>;
     dir?: string;
     wsPath?: string;
+    vscWorkspaceName?: string;
   } = {}
 ): Promise<{ ctx: any; paths: LaLogPaths; th: ThresholdsMs; dir: string; wsPath: string }> {
   t.mock.timers.enable({ apis: ['Date', 'setTimeout', 'setInterval'] });
@@ -317,7 +331,7 @@ export function resolvePanel(
       wsName: h.wsName,
       wsPath: h.wsPath,
       // Harness default is multi mode: the US-5.x stories are about explicit
-      // project management. Single-project tests pass `false` explicitly.
+      // project management. Default-mode tests pass `false` explicitly.
       multiProject: opts.multiProject ?? true,
     }),
     h.store,

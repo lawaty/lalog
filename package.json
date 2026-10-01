@@ -3,7 +3,7 @@
   "displayName": "LaLog",
   "description": "Local-first work session tracker with automatic event capture, human session descriptions, and optional opencode-powered AI assistance.",
   "icon": "resources/icon.png",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "publisher": "lawaty",
   "license": "MIT",
   "repository": {
@@ -137,7 +137,7 @@
         "lalog.multiProject": {
           "type": "boolean",
           "default": false,
-          "description": "Enable multiple projects (advanced). Off by default: LaLog keeps a single project for this workspace — named after the folder, renameable — and all recorded history belongs to it. On: full project management (create, claim, archive)."
+          "description": "Enable multiple projects (advanced). Off by default: LaLog keeps one project per workspace — named after the VS Code workspace, renameable, and each workspace's history stays in its own project. On: full project management (create, claim, archive)."
         },
         "lalog.maxStdoutChars": {
           "type": "number",

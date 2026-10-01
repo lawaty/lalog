@@ -27,9 +27,9 @@ export interface LaLogConfig {
   /** Days to keep captured file diffs; 0 keeps them forever. Terminal/AI entries never expire. */
   diffRetentionDays: number;
   /**
-   * Advanced: manage several projects explicitly. Off by default — LaLog keeps a
-   * single implicit project per workspace (named after the folder, renameable)
-   * that owns all recorded history. See ADR-029.
+   * Advanced: manage several projects explicitly. Off by default — LaLog keeps
+   * one project per workspace, named after the VS Code workspace and renameable
+   * (a rename sticks). See ADR-030.
    */
   multiProject: boolean;
 }

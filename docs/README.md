@@ -94,7 +94,7 @@ Core settings are under `lalog.*`. AI settings are under `lalog.ai.*`.
 | `lalog.captureAiLog` | boolean | `true` | Log AI interaction metadata |
 | `lalog.maxDiffChars` | number | `16000` | Max characters per diff entry |
 | `lalog.diffRetentionDays` | `14` | Days to keep `type:'diff'` entries (`0` keeps them forever) |
-| `lalog.multiProject` | `false` | Advanced: full multi-project management (off by default — one project per workspace) |
+| `lalog.multiProject` | `false` | Advanced: full multi-project management (off by default — one project per workspace, named after the VS Code workspace) |
 | `lalog.maxStdoutChars` | number | `32000` | Max characters per terminal stdout |
 
 See [Features → Configuration](features.md#configuration) for the full list.
@@ -118,7 +118,7 @@ See [Features → Configuration](features.md#configuration) for the full list.
 | Delete session | `lalog.deleteSession` | Remove a session and its technical sidecar, after confirmation |
 | Show session detail | `lalog.sessionDetail` | Open a session as a markdown document (splits, counters, files, notes, git, diffs, terminal, AI) |
 | Show file diffs for a day | `lalog.dayDiffs` | Every file change of one local day in a single document |
-| Rename project | `lalog.renameProject` | Rename the workspace's implicit project |
+| Rename project | `lalog.renameProject` | Rename this workspace's project (the name then sticks) |
 | Export files by day | `lalog.exportFilesByDay` | Legacy `files_by_day.txt` export |
 
 ## Navigation

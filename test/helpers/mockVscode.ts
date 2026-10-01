@@ -48,6 +48,13 @@ function track<T>(e: MockEmitter<T>): MockEmitter<T> {
 
 // ---- mutable state ----
 let workspaceFolders: { uri: { fsPath: string }; name: string }[] | null = null;
+/**
+ * `vscode.workspace.name`. The harness leaves it unset unless a test opts in —
+ * callers fall back to `workspaceFolders[0].name` (the folder basename), which
+ * is what real VS Code reports for a single-folder window too. Tests exercise
+ * both paths.
+ */
+let workspaceName: string | undefined;
 const configMap = new Map<string, Record<string, unknown>>();
 let nextQuickPickItems: any[] = [];
 let nextInputBoxTexts: (string | undefined)[] = [];
@@ -90,6 +97,12 @@ export const workspace = {
   },
   set workspaceFolders(v) {
     workspaceFolders = v;
+  },
+  get name() {
+    return workspaceName;
+  },
+  set name(v: string | undefined) {
+    workspaceName = v;
   },
   getConfiguration(section: string) {
     return {
@@ -312,6 +325,7 @@ export const mockVscode = {
   reset() {
     for (const e of allEmitters) e.clear();
     workspaceFolders = null;
+    workspaceName = undefined;
     configMap.clear();
     nextQuickPickItems = [];
     nextInputBoxTexts = [];
@@ -340,11 +354,18 @@ export const mockVscode = {
     configMap.set(section, { ...existing, ...values });
   },
 
-  setWorkspaceFolders(paths: string[]) {
+  setWorkspaceFolders(paths: string[], opts?: { name?: string }) {
     workspaceFolders = paths.map((p) => ({
       uri: { fsPath: p },
       name: path.basename(p),
     }));
+    // `name` given → a named workspace (.code-workspace / multi-root); left out
+    // → single-folder window, where `vscode.workspace.name` is undefined.
+    workspaceName = opts?.name;
+  },
+
+  setWorkspaceName(name: string | undefined) {
+    workspaceName = name;
   },
 
   setShellExecutionApiAvailable(available: boolean) {

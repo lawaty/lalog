@@ -7,10 +7,20 @@ export interface Project {
   color: string;
   /** Workspace keys this project claims. Every session with a matching key belongs to it. */
   workspaceKeys: string[];
-  /** Human-readable folder hints for the management UI (never matched against). */
+  /** Human-readable folder hints for the management UI (matched only by the one-time split migration). */
   pathHints: string[];
   createdAt: number;
   archivedAt?: number;
+  /** 'auto' = name derived from the VS Code workspace and may track it; 'user' = explicit rename, never auto-changed. */
+  nameSource?: 'auto' | 'user';
+}
+
+/**
+ * True when the name was generated from the workspace and may follow it.
+ * A missing flag reads as `'user'` — never stomp a name we did not generate.
+ */
+export function isAutoNamed(p: Project): boolean {
+  return p.nameSource === 'auto';
 }
 
 /** Resolve which project a session belongs to. Pure — no I/O. */

@@ -97,7 +97,7 @@ Data is written to `~/.lalog/`:
 | `lalog.captureAiLog` | boolean | `true` | Log AI interaction metadata |
 | `lalog.maxDiffChars` | number | `16000` | Max characters per diff entry |
 | `lalog.diffRetentionDays` | `14` | Days to keep captured file diffs (`0` = forever; terminal/AI metadata is always kept) |
-| `lalog.multiProject` | `false` | Advanced: full multi-project management. Off by default — one project per workspace, renameable |
+| `lalog.multiProject` | `false` | Advanced: full multi-project management. Off by default — one project per workspace, named after the VS Code workspace, renameable |
 | `lalog.maxStdoutChars` | number | `32000` | Max characters per terminal stdout |
 
 ## Privacy

@@ -111,7 +111,7 @@ test('US-5.4 · archive/restore via the panel', async (t) => {
   await flush();
   assert.equal(registry.get(proj.id)!.archivedAt, undefined);
 });
-// ---- US-5.5 / US-5.6 · single implicit workspace project (ADR-029) -----------
+// ---- US-5.5 / US-5.6 · per-workspace projects (ADR-030) ---------------------
 
 function tempDataDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'lalog-proj-'));
@@ -127,8 +127,16 @@ function registryOver(dir: string, projects?: unknown[]): ProjectRegistry {
   return new ProjectRegistry(paths);
 }
 
-function seeded(id: string, name: string, keys: string[], hints: string[], createdAt: number) {
-  return { id, name, color: '#409cd4', workspaceKeys: keys, pathHints: hints, createdAt };
+/** A seeded project record. Omit `nameSource` for a pre-0.7 (flag-less) record. */
+function seeded(
+  id: string,
+  name: string,
+  keys: string[],
+  hints: string[],
+  createdAt: number,
+  nameSource?: 'auto' | 'user'
+) {
+  return nameSource ? { id, name, color: '#409cd4', workspaceKeys: keys, pathHints: hints, createdAt, nameSource } : { id, name, color: '#409cd4', workspaceKeys: keys, pathHints: hints, createdAt };
 }
 
 function lastState(): any {
@@ -136,197 +144,371 @@ function lastState(): any {
   return msgs.length ? msgs[msgs.length - 1] : null;
 }
 
-test('US-5.5 · no projects yet → one is created for this workspace', () => {
+test('US-5.5 · no project yet → one is created for this workspace, named after it', () => {
   const dir = tempDataDir();
   const r = registryOver(dir);
-  const res = r.ensureSingleProject({
+  const res = r.ensureWorkspaceProject({
     wsKey: 'k-new',
     wsPath: '/home/me/lalog',
-    fallbackName: 'lalog',
-    historyKeys: ['k-old', 'k-old-2', 'k-new'],
+    vscName: 'lalog',
+    // Another workspace's history must NOT be absorbed (no global union).
+    history: [session('k-old', { workspaceName: 'worklog' })],
   });
-  assert.deepEqual(res.droppedIds, []);
+  assert.equal(res.split, false);
+  assert.equal(r.list().length, 1);
   assert.equal(res.project.name, 'lalog');
-  assert.deepEqual(r.list().length, 1);
-  assert.deepEqual(res.project.workspaceKeys.sort(), ['k-new', 'k-old', 'k-old-2']);
+  assert.equal(res.project.nameSource, 'auto');
+  assert.deepEqual(res.project.workspaceKeys, ['k-new'], 'only this workspace is claimed');
   assert.deepEqual(res.project.pathHints, ['/home/me/lalog']);
-  // A name collision never happens here (registry was empty).
-  assert.ok(r.list()[0].id.startsWith('prj_'));
+  assert.ok(res.project.id.startsWith('prj_'));
+  const onDisk = JSON.parse(fs.readFileSync(path.join(dir, 'projects.json'), 'utf8'));
+  assert.equal(onDisk.projects[0].nameSource, 'auto');
 });
 
-test('US-5.5 · one project → claims the new key and history, keeps its name', () => {
+test('US-5.5 · exact match on an auto name → tracks the workspace name, restores, claims the path', () => {
   const dir = tempDataDir();
   const r = registryOver(dir, [
-    { ...seeded('prj_a', 'Client A', ['k-old'], ['/old/worklog'], 1000), archivedAt: 5000 },
+    { ...seeded('prj_a', 'worklog', ['k-lalog'], [], 1000, 'auto'), archivedAt: 5000 },
   ]);
-  const res = r.ensureSingleProject({
+  const res = r.ensureWorkspaceProject({
+    wsKey: 'k-lalog',
+    wsPath: '/home/me/lalog',
+    vscName: 'lalog',
+    history: [],
+  });
+  assert.equal(res.split, false);
+  assert.equal(res.project.id, 'prj_a', 'the claiming project is reused');
+  assert.equal(res.project.name, 'lalog', 'auto name follows the workspace');
+  assert.equal(res.project.nameSource, 'auto', 'still auto');
+  assert.equal(res.project.archivedAt, undefined, 'un-archived');
+  assert.deepEqual(res.project.pathHints, ['/home/me/lalog']);
+  assert.equal(
+    JSON.parse(fs.readFileSync(path.join(dir, 'projects.json'), 'utf8')).projects[0].name,
+    'lalog',
+    'persisted'
+  );
+});
+
+test('US-5.5 · exact match on a user name → never renamed (flag-less records count as user)', () => {
+  for (const nameSource of ['user', undefined] as const) {
+    const dir = tempDataDir();
+    const r = registryOver(dir, [seeded('prj_a', 'Client X', ['k-lalog'], ['/home/me/lalog'], 1000, nameSource)]);
+    const res = r.ensureWorkspaceProject({
+      wsKey: 'k-lalog',
+      wsPath: '/home/me/lalog',
+      vscName: 'lalog',
+      history: [],
+    });
+    assert.equal(res.project.id, 'prj_a');
+    assert.equal(res.project.name, 'Client X', `name kept (nameSource: ${String(nameSource)})`);
+    assert.equal(res.project.nameSource, nameSource);
+  }
+});
+
+test('US-5.5 · several projects exist → nothing is collapsed, this workspace only', () => {
+  // (a) the current key is unclaimed → create this window's project, keep the rest.
+  const dir = tempDataDir();
+  const r = registryOver(dir, [
+    seeded('prj_a', 'Client A', ['k-a'], ['/a'], 1000, 'user'),
+    seeded('prj_b', 'Client B', ['k-b'], ['/b'], 2000, 'user'),
+  ]);
+  const created = r.ensureWorkspaceProject({
     wsKey: 'k-new',
     wsPath: '/home/me/lalog',
-    fallbackName: 'lalog',
-    historyKeys: ['k-old', 'k-ancient'],
+    vscName: 'lalog',
+    history: [session('k-a', { workspaceName: 'Client A' })],
   });
-  assert.equal(res.project.name, 'Client A', 'never auto-renamed');
-  assert.equal(res.project.archivedAt, undefined, 'sole project is restored');
-  assert.deepEqual(res.droppedIds, []);
-  assert.deepEqual(res.project.workspaceKeys.sort(), ['k-ancient', 'k-new', 'k-old']);
-  assert.deepEqual(res.project.pathHints.sort(), ['/home/me/lalog', '/old/worklog']);
+  assert.equal(created.split, false);
+  assert.deepEqual(r.list().map((p) => p.name).sort(), ['Client A', 'Client B', 'lalog']);
+  assert.deepEqual(r.list()[0].workspaceKeys, ['k-a'], 'other claims are untouched');
+  assert.deepEqual(r.list()[0].pathHints, ['/a'], 'other hints are untouched');
+
+  // (b) the current key is claimed → that project, no union, no drop.
+  const res = r.ensureWorkspaceProject({
+    wsKey: 'k-a',
+    wsPath: '/a',
+    vscName: 'Client A',
+    history: [],
+  });
+  assert.equal(res.project.id, 'prj_a');
+  assert.deepEqual(r.list()[0].workspaceKeys, ['k-a'], 'never unioned with other keys');
+  assert.equal(r.list().length, 3);
 });
 
-test('US-5.5 · several projects → the workspace-named one survives and absorbs the rest', () => {
+test('US-5.5 · a collapsed legacy record is split once into per-workspace projects', () => {
   const dir = tempDataDir();
+  // Exactly what ADR-029 left behind: one project claiming every workspace.
   const r = registryOver(dir, [
-    seeded('prj_old', 'worklog', ['k-old'], ['/old/worklog'], 1000),
-    seeded('prj_new', 'lalog', ['k-new'], ['/new/lalog'], 2000),
+    seeded('prj_legacy', 'everything', ['k-a', 'k-b', 'k-c', 'k-dead'], ['/home/me/Alpha', '/home/me/Beta', '/home/me/Gamma'], 1000),
   ]);
   const before = fs.readFileSync(path.join(dir, 'projects.json'), 'utf8');
-  const res = r.ensureSingleProject({
-    wsKey: 'k-new',
-    wsPath: '/new/lalog',
-    fallbackName: 'lalog',
-    historyKeys: ['k-old'],
-  });
-  assert.equal(res.project.id, 'prj_new', 'name match wins over createdAt');
-  assert.equal(res.project.createdAt, 2000, 'survivor keeps its own id/color/createdAt');
-  assert.deepEqual(res.droppedIds, ['prj_old']);
-  assert.equal(r.list().length, 1);
-  assert.deepEqual(res.project.workspaceKeys.sort(), ['k-new', 'k-old']);
-  assert.deepEqual(res.project.pathHints.sort(), ['/new/lalog', '/old/worklog']);
+  const history = [
+    session('k-a', { id: 's-a-old', workspaceName: 'alpha-old', startedAt: 1000 }),
+    session('k-a', { id: 's-a-new', workspaceName: 'Alpha', startedAt: 5000 }),
+    session('k-b', { id: 's-b', workspaceName: 'Beta', startedAt: 2000 }),
+    session('k-c', { id: 's-c', workspaceName: 'Gamma', startedAt: 4000 }),
+    // k-dead: no session and no pathHint → nothing references it.
+  ];
 
-  const bak = path.join(dir, 'projects.json.pre-collapse.bak');
-  assert.ok(fs.existsSync(bak), 'pre-collapse backup written');
-  assert.equal(fs.readFileSync(bak, 'utf8'), before, 'backup holds the original file');
-  assert.deepEqual(JSON.parse(fs.readFileSync(bak, 'utf8')).projects.length, 2);
+  const res = r.ensureWorkspaceProject({
+    wsKey: 'k-a',
+    wsPath: '/home/me/Alpha',
+    vscName: 'Alpha',
+    history,
+  });
+  assert.equal(res.split, true);
+  assert.equal(res.project.name, 'Alpha', 'current workspace is named from its own history');
+  const projects = r.list();
+  assert.equal(projects.length, 3, 'k-dead was skipped');
+  assert.deepEqual(projects.map((p) => p.name).sort(), ['Alpha', 'Beta', 'Gamma']);
+  assert.deepEqual(projects.map((p) => p.workspaceKeys[0]).sort(), ['k-a', 'k-b', 'k-c']);
+  assert.ok(projects.every((p) => p.workspaceKeys.length === 1), 'one key each');
+  assert.deepEqual(
+    projects.map((p) => p.pathHints[0]).sort(),
+    ['/home/me/Alpha', '/home/me/Beta', '/home/me/Gamma'],
+    'the matching folder hint is attached'
+  );
+  assert.ok(projects.every((p) => p.nameSource === 'auto'), 'split records are auto-named');
+  assert.ok(
+    projects.every((p) => p.id !== 'prj_legacy'),
+    'the collapsed id is dropped'
+  );
+
+  const bakFile = path.join(dir, 'projects.json.pre-split.bak');
+  assert.ok(fs.existsSync(bakFile), 'pre-split backup written');
+  assert.equal(fs.readFileSync(bakFile, 'utf8'), before, 'backup holds the collapsed file');
+  assert.ok(
+    !fs.existsSync(path.join(dir, 'projects.json.pre-collapse.bak')),
+    'no collapse backup (that mechanism is gone)'
+  );
+
+  // Idempotent: a second call (and a fresh registry over the split file) is a no-op.
+  const after = [...r.list()].sort((a, b) => a.name.localeCompare(b.name));
+  const bakAfter = fs.readFileSync(bakFile, 'utf8');
+  const second = r.ensureWorkspaceProject({ wsKey: 'k-a', wsPath: '/home/me/Alpha', vscName: 'Alpha', history });
+  assert.equal(second.split, false);
+  assert.equal(r.list().length, 3);
+  assert.deepEqual(
+    [...r.list()].sort((a, b) => a.name.localeCompare(b.name)).map((p) => [p.id, p.name]),
+    after.map((p) => [p.id, p.name]),
+    'nothing changed'
+  );
+  assert.equal(fs.readFileSync(bakFile, 'utf8'), bakAfter, 'backup is never rewritten');
+  const third = registryOver(dir).ensureWorkspaceProject({ wsKey: 'k-a', wsPath: '/home/me/Alpha', vscName: 'Alpha', history });
+  assert.equal(third.split, false, 'a fresh registry over the split file does not split again');
+  assert.equal(third.project.id, after.find((p) => p.name === 'Alpha')!.id);
 });
 
-test('US-5.5 · no name match → oldest live project survives, archived ones fold in', () => {
+test('US-5.5 · a collapsed record the user named is never split', () => {
   const dir = tempDataDir();
   const r = registryOver(dir, [
-    { ...seeded('prj_archived', 'Client X', ['k-x'], ['/x'], 1000), archivedAt: 9000 },
-    seeded('prj_mid', 'Client Y', ['k-y'], ['/y'], 3000),
-    seeded('prj_newest', 'Client Z', ['k-z'], ['/z'], 5000),
+    seeded('prj_legacy', 'Client X', ['k-a', 'k-b'], ['/a', '/b'], 1000, 'user'),
   ]);
-  const res = r.ensureSingleProject({
-    wsKey: 'k-new',
-    wsPath: '/new/lalog',
-    fallbackName: 'lalog',
-    historyKeys: [],
-  });
-  assert.equal(res.project.id, 'prj_mid', 'oldest non-archived survives');
-  assert.deepEqual(res.droppedIds.sort(), ['prj_archived', 'prj_newest']);
-  assert.equal(r.list().length, 1);
-  assert.deepEqual(res.project.workspaceKeys.sort(), ['k-new', 'k-x', 'k-y', 'k-z']);
-  assert.deepEqual(res.project.pathHints.sort(), ['/new/lalog', '/x', '/y', '/z']);
-  assert.equal(res.project.archivedAt, undefined, 'survivor is live');
+  const res = r.ensureWorkspaceProject({ wsKey: 'k-a', wsPath: '/a', vscName: 'Alpha', history: [session('k-a', { workspaceName: 'Alpha' })] });
+  assert.equal(res.split, false);
+  assert.equal(r.list().length, 1, 'still one project');
+  assert.ok(!fs.existsSync(path.join(dir, 'projects.json.pre-split.bak')), 'no backup');
+  assert.equal(res.project.name, 'Client X', 'user name wins');
 });
 
-test('US-5.5 · the collapse is idempotent across activations', () => {
+test('US-5.5 · the project is named after the VS Code workspace name', async (t) => {
   const dir = tempDataDir();
-  const r = registryOver(dir, [
-    seeded('prj_old', 'worklog', ['k-old'], ['/old/worklog'], 1000),
-    seeded('prj_new', 'lalog', ['k-new'], ['/new/lalog'], 2000),
-  ]);
-  const bakFile = path.join(dir, 'projects.json.pre-collapse.bak');
-  const opts = {
-    wsKey: 'k-new',
-    wsPath: '/new/lalog',
-    fallbackName: 'lalog',
-    historyKeys: ['k-old', 'k-ancient'],
-  };
-  const first = r.ensureSingleProject(opts);
-  const bakAfterFirst = fs.readFileSync(bakFile, 'utf8');
-  const keysAfterFirst = [...first.project.workspaceKeys];
-
-  const second = r.ensureSingleProject(opts);
-  assert.deepEqual(second.droppedIds, [], 'nothing left to drop');
-  assert.equal(second.project.id, first.project.id);
-  assert.deepEqual(second.project.workspaceKeys, keysAfterFirst, 'claims unchanged');
-  assert.equal(fs.readFileSync(bakFile, 'utf8'), bakAfterFirst, 'backup is never rewritten');
-
-  const third = registryOver(dir).ensureSingleProject(opts);
-  assert.deepEqual(third.droppedIds, [], 'a fresh registry over the collapsed file is a no-op');
-  assert.equal(third.project.id, first.project.id);
-  assert.deepEqual(third.project.workspaceKeys, keysAfterFirst);
+  await setupExtension(t, { dir, vscWorkspaceName: 'Daftra Project' });
+  const projects = new ProjectRegistry(buildPaths(dir)).list();
+  assert.equal(projects.length, 1);
+  assert.equal(projects[0].name, 'Daftra Project', 'not the folder basename');
+  assert.equal(projects[0].nameSource, 'auto');
 });
 
-test('US-5.5 · a folder rename keeps every old session in the project (regression)', async (t) => {
+test('US-5.5 · no VS Code workspace name → the folder basename is the default', async (t) => {
+  const dir = tempDataDir();
+  const ext = await setupExtension(t, { dir });
+  const projects = new ProjectRegistry(buildPaths(dir)).list();
+  assert.equal(projects.length, 1);
+  assert.equal(projects[0].name, path.basename(ext.wsPath));
+  assert.equal(projects[0].nameSource, 'auto');
+});
+
+test('US-5.5 · renaming marks the name user-owned — auto-tracking stops', async (t) => {
+  const dir = tempDataDir();
+  const ext = await setupExtension(t, { dir, vscWorkspaceName: 'worklog' });
+  const paths = ext.paths;
+  const before = new ProjectRegistry(paths).list();
+  assert.equal(before.length, 1);
+  assert.equal(before[0].name, 'worklog');
+  assert.equal(before[0].nameSource, 'auto');
+
+  mockVscode.queueInputBox('Client X');
+  await mockVscode.commands.executeCommand('lalog.renameProject', before[0].id);
+  const onDisk = JSON.parse(fs.readFileSync(path.join(paths.dataDir, 'projects.json'), 'utf8'));
+  assert.equal(onDisk.projects[0].name, 'Client X');
+  assert.equal(onDisk.projects[0].nameSource, 'user', 'rename marks the name user-owned');
+
+  // A later activation naming the workspace differently must leave it alone.
+  const res = new ProjectRegistry(paths).ensureWorkspaceProject({
+    wsKey: workspaceKey(ext.wsPath),
+    wsPath: ext.wsPath,
+    vscName: 'renamed folder',
+    history: [],
+  });
+  assert.equal(res.project.name, 'Client X', 'a user name is never stomped');
+  assert.equal(res.project.nameSource, 'user');
+});
+
+test('US-5.5 · collapsed data is split on activation: each workspace keeps its own project (regression)', async (t) => {
   const dir = tempDataDir();
   const paths = buildPaths(dir);
   ensureDirs(paths);
-  const oldWs = path.join(dir, 'worklog');
-  const newWs = path.join(dir, 'lalog');
-  fs.mkdirSync(oldWs, { recursive: true });
-  fs.mkdirSync(newWs, { recursive: true });
-  const kOld = workspaceKey(oldWs);
-  const kNew = workspaceKey(newWs);
-  assert.notEqual(kOld, kNew);
+  const lalogWs = path.join(dir, 'lalog');
+  const daftraWs = path.join(dir, 'Daftra Project');
+  fs.mkdirSync(lalogWs, { recursive: true });
+  fs.mkdirSync(daftraWs, { recursive: true });
+  const kLalog = workspaceKey(lalogWs);
+  const kDaftra = workspaceKey(daftraWs);
+  assert.notEqual(kLalog, kDaftra);
 
-  // The user's actual data: two projects, history recorded under the old key,
-  // and one session carrying an explicit pointer at the project that is about
-  // to be collapsed away.
+  // The user's actual data: one collapsed project claiming both workspaces.
+  fs.writeFileSync(
+    path.join(dir, 'projects.json'),
+    JSON.stringify(
+      { version: 1, projects: [seeded('prj_all', 'lalog', [kLalog, kDaftra], [lalogWs, daftraWs], 1000)] },
+      null,
+      2
+    )
+  );
+  const sessions = [
+    session(kLalog, { id: 's-lalog-1', workspaceName: 'lalog', startedAt: 1000 }),
+    session(kLalog, { id: 's-lalog-2', workspaceName: 'lalog', startedAt: 9000, projectId: 'prj_all' }),
+    session(kDaftra, { id: 's-daftra-1', workspaceName: 'Daftra Project', startedAt: 5000 }),
+    session(kDaftra, { id: 's-daftra-2', workspaceName: 'Daftra Project', startedAt: 9500, projectId: 'prj_all' }),
+  ];
+  fs.writeFileSync(paths.sessionsFile, sessions.map((s) => JSON.stringify(s)).join('\n') + '\n');
+
+  const ext = await setupExtension(t, { dir, wsPath: lalogWs });
+
+  const projects = new ProjectRegistry(paths).list();
+  assert.equal(projects.length, 2, 'one project per workspace, nothing collapsed');
+  const lalogProj = projects.find((p) => p.workspaceKeys.includes(kLalog))!;
+  const daftraProj = projects.find((p) => p.workspaceKeys.includes(kDaftra))!;
+  assert.deepEqual(lalogProj.workspaceKeys, [kLalog], 'the lalog project claims only the lalog key');
+  assert.deepEqual(lalogProj.pathHints, [lalogWs]);
+  assert.equal(lalogProj.name, 'lalog');
+  assert.equal(lalogProj.nameSource, 'auto');
+  assert.equal(daftraProj.name, 'Daftra Project', 'named from its own history');
+  assert.deepEqual(daftraProj.pathHints, [daftraWs]);
+  assert.ok(fs.existsSync(path.join(dir, 'projects.json.pre-split.bak')));
+
+  // Every session resolves to the project of its own workspace.
+  const stored = await new SessionStore({ paths, th: ext.th }).loadAll();
+  for (const s of stored) {
+    assert.equal(
+      resolveProject(s, projects)!.id,
+      s.workspaceKey === kLalog ? lalogProj.id : daftraProj.id,
+      `${s.id} resolves to its own workspace's project`
+    );
+  }
+  // Explicit pointers at the collapsed id are re-pointed at the owner of each key.
+  assert.equal(stored.find((s) => s.id === 's-lalog-2')!.projectId, lalogProj.id);
+  assert.equal(stored.find((s) => s.id === 's-daftra-2')!.projectId, daftraProj.id);
+
+  // The panel shows this window's project under its own name — and nothing else.
+  const view = mockWebviewView();
+  mockVscode._webviewProvider.resolveWebviewView(view);
+  await waitFor(() => lastState() !== null);
+  const st = lastState();
+  assert.equal(st.multiProject, false);
+  assert.equal(st.projects.length, 1, "single mode pushes only this window's project");
+  assert.equal(st.projects[0].id, lalogProj.id);
+  assert.equal(st.projects[0].name, 'lalog');
+});
+
+test('US-5.5 · a deliberate multi-key union (nameSource present) is never split', () => {
+  // Post-0.7 records always carry nameSource; a multi-key project there is a
+  // deliberate union built in multi mode, not a 0.6.0 collapse artifact.
+  for (const nameSource of ['auto', 'user'] as const) {
+    const dir = tempDataDir();
+    const r = registryOver(dir, [
+      seeded('prj_u', 'Client ABC', ['k-a', 'k-b'], ['/a', '/b'], 1000, nameSource as any),
+    ]);
+    const res = r.ensureWorkspaceProject({
+      wsKey: 'k-a',
+      wsPath: '/a',
+      vscName: 'Alpha',
+      history: [session('k-a', { workspaceName: 'Alpha' })],
+    });
+    assert.equal(res.split, false, `nameSource '${nameSource}' is never split`);
+    assert.equal(r.list().length, 1, 'the union survives');
+    assert.equal(res.project.id, 'prj_u', 'the union is reused by its key');
+    assert.ok(!fs.existsSync(path.join(dir, 'projects.json.pre-split.bak')), 'no backup');
+  }
+});
+
+test('US-5.5 · a renamed folder is a new identity: the old project is preserved', () => {
+  const dir = tempDataDir();
+  const r = registryOver(dir, [
+    seeded('prj_old', 'lalog', ['k-old'], ['/home/me/lalog'], 1000, 'auto'),
+  ]);
+  // The folder was renamed; the current workspace has a brand-new key.
+  const res = r.ensureWorkspaceProject({
+    wsKey: 'k-new',
+    wsPath: '/home/me/lalog2',
+    vscName: 'lalog2',
+    history: [session('k-old', { workspaceName: 'lalog' })],
+  });
+  assert.equal(res.split, false);
+  assert.notEqual(res.project.id, 'prj_old', 'the new key gets its own project');
+  assert.equal(res.project.name, 'lalog2');
+  assert.equal(r.list().length, 2, 'no merge, no drop');
+  assert.deepEqual(r.list().find((p) => p.id === 'prj_old')!.workspaceKeys, ['k-old']);
+  assert.equal(
+    resolveProject(session('k-old'), r.list())!.id,
+    'prj_old',
+    'old sessions keep resolving to the old project'
+  );
+  assert.equal(resolveProject(session('k-new'), r.list())!.id, res.project.id);
+});
+
+test('US-5.5 · activation never re-points a session whose projectId already resolves', async (t) => {
+  const dir = tempDataDir();
+  const paths = buildPaths(dir);
+  ensureDirs(paths);
+  const ws = path.join(dir, 'workspace');
+  fs.mkdirSync(ws, { recursive: true });
   fs.writeFileSync(
     path.join(dir, 'projects.json'),
     JSON.stringify(
       {
         version: 1,
         projects: [
-          seeded('prj_worklog', 'worklog', [kOld], [oldWs], 1000),
-          seeded('prj_lalog', 'lalog', [kNew], [newWs], 2000),
+          seeded('prj_a', 'Client A', [workspaceKey(ws)], [ws], 1000, 'auto'),
+          seeded('prj_b', 'Client B', ['k-b'], ['/b'], 2000, 'user'),
         ],
       },
       null,
       2
     )
   );
-  const orphan = session(kOld, { id: 's-orphan', projectId: 'prj_worklog' });
-  const plain = session(kOld, { id: 's-plain' });
+  // A session in ws (claimed by prj_a) is explicitly assigned to prj_b — a
+  // valid pointer to a live project, unrelated to the split.
   fs.writeFileSync(
     paths.sessionsFile,
-    [JSON.stringify(orphan), JSON.stringify(plain)].join('\n') + '\n'
+    JSON.stringify(session(workspaceKey(ws), { id: 's-a', workspaceName: 'Client A', startedAt: 1000, projectId: 'prj_b' })) + '\n'
   );
 
-  const ext = await setupExtension(t, { dir, wsPath: newWs });
-
-  const registry = new ProjectRegistry(paths);
-  const projects = registry.list();
-  assert.equal(projects.length, 1, 'collapsed to a single project');
-  assert.equal(projects[0].name, 'lalog');
-  assert.ok(projects[0].workspaceKeys.includes(kOld), 'old folder key is claimed');
-  assert.ok(projects[0].workspaceKeys.includes(kNew), 'new folder key is claimed');
-  assert.ok(fs.existsSync(path.join(dir, 'projects.json.pre-collapse.bak')));
-  assert.equal(
-    JSON.parse(fs.readFileSync(path.join(dir, 'projects.json.pre-collapse.bak'), 'utf8')).projects
-      .length,
-    2,
-    'both originals are in the backup'
-  );
-
-  // The explicit pointer at the dropped project is re-pointed, not left dangling.
+  const ext = await setupExtension(t, { dir, wsPath: ws });
   const stored = await new SessionStore({ paths, th: ext.th }).loadAll();
-  const healed = stored.find((s) => s.id === 's-orphan')!;
-  assert.equal(healed.projectId, projects[0].id, 'sessions.jsonl re-pointed to the survivor');
-  // …and the old-key session now resolves to the single project.
-  assert.equal(resolveProject(stored.find((s) => s.id === 's-plain')!, projects)?.id, projects[0].id);
-  assert.equal(resolveProject(healed, projects)?.id, projects[0].id);
-
-  // The panel shows one project and says so.
-  const view = mockWebviewView();
-  mockVscode._webviewProvider.resolveWebviewView(view);
-  await waitFor(() => lastState() !== null);
-  const st = lastState();
-  assert.equal(st.multiProject, false);
-  assert.equal(st.projects.length, 1);
-  assert.equal(st.projects[0].name, 'lalog');
+  assert.equal(stored[0].projectId, 'prj_b', 'explicit-beats-derived is not “healed” away');
 });
 
 test('US-5.5 · the single project can be renamed from the panel', async (t) => {
-  const ext = await setupExtension(t);
+  const ext = await setupExtension(t, { vscWorkspaceName: 'worklog' });
   const paths = ext.paths;
   const view = mockWebviewView();
   mockVscode._webviewProvider.resolveWebviewView(view);
   await waitFor(() => lastState() !== null);
   const before = lastState();
   assert.equal(before.projects.length, 1, 'one implicit project');
-  assert.equal(before.projects[0].name, 'workspace', 'named after the folder');
+  assert.equal(before.projects[0].name, 'worklog', 'named after the VS Code workspace');
 
   mockVscode.queueInputBox('Client X');
   view._post({ type: 'renameProject', id: before.projects[0].id });
@@ -335,9 +517,10 @@ test('US-5.5 · the single project can be renamed from the panel', async (t) => 
   );
   const onDisk = JSON.parse(fs.readFileSync(path.join(paths.dataDir, 'projects.json'), 'utf8'));
   assert.equal(onDisk.projects[0].name, 'Client X', 'projects.json updated');
+  assert.equal(onDisk.projects[0].nameSource, 'user');
   const prompt = mockVscode._promptCalls.find((c) => c.title === 'Rename project');
   assert.ok(prompt, 'the input box was prefilled with the current name');
-  assert.equal(prompt.value, 'workspace');
+  assert.equal(prompt.value, 'worklog');
   // Cancelling leaves the name alone.
   mockVscode.queueInputBox('   ');
   view._post({ type: 'renameProject', id: before.projects[0].id });
@@ -372,9 +555,9 @@ test('US-5.6 · lalog.multiProject keeps every project untouched', async (t) => 
 
   await setupExtension(t, { dir, wsPath: ws, config: { multiProject: true } });
   const projects = new ProjectRegistry(paths).list();
-  assert.equal(projects.length, 2, 'no collapse in multi mode');
+  assert.equal(projects.length, 2, 'no split and no collapse in multi mode');
   assert.deepEqual(projects.map((p) => p.name).sort(), ['Client A', 'Client B']);
-  assert.ok(!fs.existsSync(path.join(dir, 'projects.json.pre-collapse.bak')), 'no backup written');
+  assert.ok(!fs.existsSync(path.join(dir, 'projects.json.pre-split.bak')), 'no backup written');
 
   const view = mockWebviewView();
   mockVscode._webviewProvider.resolveWebviewView(view);
@@ -391,8 +574,8 @@ test('US-5.5 · the Projects tab shows one name, and hides create/claim/archive'
   const h = setupHarness(t);
   await h.start();
   const { view, registry } = resolvePanel(h, { multiProject: false });
-  // No workspace key up front — the gated claim must not add one.
-  const p = registry.create({ name: 'Client A' });
+  // In single mode the window's project owns the workspace key up front.
+  const p = registry.create({ name: 'Client A', workspaceKey: h.wsKey, pathHint: h.wsPath });
   await waitFor(() => lastState() !== null && lastState().projects.length === 1);
   view._post({ type: 'newProjectFromWorkspace' });
   view._post({ type: 'newProject' });
@@ -401,7 +584,8 @@ test('US-5.5 · the Projects tab shows one name, and hides create/claim/archive'
   await flush();
   assert.equal(registry.list().length, 1, 'nothing was created');
   assert.equal(registry.list()[0].name, 'Client A');
-  assert.equal(registry.list()[0].workspaceKeys.length, 0, 'claim was gated — no key was added');
+  assert.deepEqual(registry.list()[0].workspaceKeys, [h.wsKey], 'claim was gated — no extra key was added');
   assert.equal(registry.list()[0].archivedAt, undefined, 'archive was gated');
   assert.equal(lastState().multiProject, false);
+  assert.equal(lastState().projects.length, 1, "single mode shows only this window's project");
 });

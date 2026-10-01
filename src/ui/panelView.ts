@@ -28,7 +28,7 @@ export interface PanelNow {
   wsKey: string;
   wsName: string;
   wsPath: string;
-  /** `lalog.multiProject`: false = one implicit project per workspace (ADR-029). */
+  /** `lalog.multiProject`: false = one project per workspace, named from VS Code (ADR-030). */
   multiProject: boolean;
 }
 
@@ -198,7 +198,10 @@ export class LaLogPanelProvider implements vscode.WebviewViewProvider {
       todayActiveMs: now.todayActiveMs,
       paused: now.paused,
       idleGap: now.idleGap,
-      projects: projects.map((p) => ({
+      // Single mode shows this window's project only (renaming another
+      // workspace's project from a different window would be a footgun);
+      // multi mode keeps the whole machine's catalog for management.
+      projects: (now.multiProject ? projects : projects.filter((p) => p.workspaceKeys.includes(now.wsKey))).map((p) => ({
         id: p.id,
         name: p.name,
         color: p.color,
@@ -358,8 +361,8 @@ export class LaLogPanelProvider implements vscode.WebviewViewProvider {
         return;
       }
       case 'renameProject': {
-        // Always available: renaming the single implicit project is the one
-        // project action the default mode needs.
+        // Always available: renaming this workspace's project is the one
+        // project action the default mode needs (the rename sticks).
         if (id) void vscode.commands.executeCommand('lalog.renameProject', id);
         return;
       }
@@ -909,7 +912,7 @@ export class LaLogPanelProvider implements vscode.WebviewViewProvider {
     const st = lastState;
     list.textContent = '';
 
-    // Default mode (ADR-029): exactly one implicit project per workspace, so
+    // Default mode (ADR-030): each workspace has its own project, so
     // create/claim/archive would be meaningless — the tab is a name + stats
     // and a rename button. Full management lives behind lalog.multiProject.
     if (!st.multiProject) {
