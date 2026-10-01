@@ -273,6 +273,11 @@ test('US-5.5 · a collapsed legacy record is split once into per-workspace proje
     projects.every((p) => p.id !== 'prj_legacy'),
     'the collapsed id is dropped'
   );
+  assert.equal(
+    new Set(projects.map((p) => p.color)).size,
+    projects.length,
+    'split projects get distinct palette colors'
+  );
 
   const bakFile = path.join(dir, 'projects.json.pre-split.bak');
   assert.ok(fs.existsSync(bakFile), 'pre-split backup written');
@@ -420,6 +425,43 @@ test('US-5.5 · collapsed data is split on activation: each workspace keeps its 
   assert.equal(st.projects.length, 1, "single mode pushes only this window's project");
   assert.equal(st.projects[0].id, lalogProj.id);
   assert.equal(st.projects[0].name, 'lalog');
+});
+
+test('US-5.5 · palette rename in single mode targets this window project', async (t) => {
+  const dir = tempDataDir();
+  const paths = buildPaths(dir);
+  ensureDirs(paths);
+  const ws = path.join(dir, 'workspace');
+  fs.mkdirSync(ws, { recursive: true });
+  const k = workspaceKey(ws);
+  // Another (non-archived) project sorts first — the palette fallback must NOT
+  // pick it, because a single-mode window shows (and may rename) only its own.
+  fs.writeFileSync(
+    path.join(dir, 'projects.json'),
+    JSON.stringify(
+      {
+        version: 1,
+        projects: [
+          seeded('prj_other', 'Other Client', ['k-other'], ['/other'], 1000, 'user'),
+          seeded('prj_win', 'Mine', [k], [ws], 2000, 'user'),
+        ],
+      },
+      null,
+      2
+    )
+  );
+  await setupExtension(t, { dir, wsPath: ws });
+  mockVscode.queueInputBox('Renamed');
+  await mockVscode.commands.executeCommand('lalog.renameProject');
+  const prompts = mockVscode._promptCalls.filter((c) => c.title === 'Rename project');
+  assert.equal(prompts.at(-1)?.value, 'Mine', "the prefill is this window's project, not the first one");
+  const onDisk = JSON.parse(fs.readFileSync(path.join(dir, 'projects.json'), 'utf8'));
+  assert.equal(onDisk.projects.find((p) => p.id === 'prj_win')!.name, 'Renamed');
+  assert.equal(
+    onDisk.projects.find((p) => p.id === 'prj_other')!.name,
+    'Other Client',
+    "the other workspace project is untouched"
+  );
 });
 
 test('US-5.5 · a deliberate multi-key union (nameSource present) is never split', () => {

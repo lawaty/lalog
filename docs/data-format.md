@@ -199,7 +199,7 @@ interface Project {
   name: string;               // "LaLog"
   color: string;              // from PROJECT_COLORS palette (10 hex colors), by creation index
   workspaceKeys: string[];    // claimed workspace keys — sessions with any match derive to this project
-  pathHints: string[];        // human-readable folder examples for the UI (never matched)
+  pathHints: string[];        // human-readable folder examples for the UI (matched only by the one-time split migration)
   createdAt: number;          // ms epoch
   archivedAt?: number;        // set → excluded from derivation (explicit assignments stay)
   nameSource?: 'auto' | 'user'; // who owns the name: 'auto' = derived from the VS Code workspace
@@ -244,6 +244,8 @@ Other projects are never collapsed, never unioned with this workspace's key, and
 **The one-time split.** Runs only while the registry holds exactly one pre-0.7 (flag-less) project claiming several keys — post-0.7 records always carry `nameSource`, so a multi-key project there is a deliberate union and is never split. For each claimed key: `name` = the `workspaceName` of that key's most recent session (fallback `'Workspace'`); the first still-unused `pathHint` whose basename equals that name is attached; a key with **no session and no matching hint** is skipped. The split projects are new records (`prj_…`, fresh color, `nameSource: 'auto'`) — the collapsed `id`/`color` are not preserved, and the whole split lands in a **single atomic write** (no partial intermediate file — a crash before it simply re-runs next activation). `~/.lalog/projects.json.pre-split.bak` holds the collapsed file byte-for-byte and is written **once** (only if it does not already exist). Idempotent: the next activation sees more than one project, so the guard fails. The `projects.json` schema is unchanged — no version marker, because the split is safe to re-run.
 
 **Session re-pointing**: after the split, any `sessions.jsonl` line whose `projectId` refers to a removed record is rewritten (full-file rewrite, as in US-4.7) to the id of whichever project claims **that session's own** `workspaceKey` — one project per workspace, not one global survivor. Sessions with no `projectId` need no rewrite: they resolve through their own workspace's claim.
+
+**Known limitations**: (a) a session **live at upgrade** keeps its dangling in-memory `projectId` until it ends and is re-loaded from disk — the record itself is healed on the next activation; (b) a dangling `projectId` whose key has no owning project is left in place (`if (owner)`, extension.ts) rather than dropped — it simply resolves to `'No project'`, and re-points as soon as that key gains a project.
 
 With `lalog.multiProject: true` the whole migration is skipped: nothing is split or named automatically, no backup is written, and a workspace claimed by several projects still resolves to the first match (known limitation).
 

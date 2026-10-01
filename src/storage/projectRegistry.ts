@@ -80,11 +80,14 @@ export class ProjectRegistry {
     return project;
   }
 
-  private newRecord(opts: { name: string; workspaceKey?: string; pathHint?: string }): Project {
+  private newRecord(opts: { name: string; workspaceKey?: string; pathHint?: string }, colorIndex?: number): Project {
     return {
       id: `prj_${crypto.randomBytes(4).toString('hex')}`,
       name: opts.name.trim(),
-      color: pickProjectColor(this.projects.length),
+      // `colorIndex` lets the split assign distinct palette slots: inside a
+      // `.map()` the array is still the pre-mutation state, so reading
+      // `this.projects.length` would paint every record the same color.
+      color: pickProjectColor(colorIndex ?? this.projects.length),
       workspaceKeys: opts.workspaceKey ? [opts.workspaceKey] : [],
       pathHints: opts.pathHint ? [opts.pathHint] : [],
       createdAt: Date.now(),
@@ -211,9 +214,10 @@ export class ProjectRegistry {
 
     // Fresh records: the collapsed id/color are dropped on purpose. A single
     // write means no partial intermediate states can land on disk, and a crash
-    // before it simply re-runs the split next activation.
-    this.projects = surviving.map((s) =>
-      this.newRecord({ name: s.name, workspaceKey: s.key, pathHint: s.hint })
+    // before it simply re-runs the split next activation. Colors are distinct
+    // (palette slots 0..N-1), matching what fresh installs produce via create().
+    this.projects = surviving.map((s, i) =>
+      this.newRecord({ name: s.name, workspaceKey: s.key, pathHint: s.hint }, i)
     );
     this.save();
     return true;

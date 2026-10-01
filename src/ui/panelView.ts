@@ -636,15 +636,13 @@ export class LaLogPanelProvider implements vscode.WebviewViewProvider {
       chips.appendChild(c);
     };
     addChip('All', null, null);
-    if (st.projects.length) {
-      const seen = new Set();
-      for (const p of st.projects) {
-        if (seen.has(p.id)) continue;
-        seen.add(p.id);
-        addChip(p.name, p.color, p.id);
-      }
-      addChip('Unassigned', '#8a8a8a', 'unassigned');
+    const seen = new Set();
+    for (const p of st.projects) {
+      if (seen.has(p.id)) continue;
+      seen.add(p.id);
+      addChip(p.name, p.color, p.id);
     }
+    addChip('Unassigned', '#8a8a8a', 'unassigned');
     list.appendChild(chips);
 
     const groups = st.groups

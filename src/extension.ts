@@ -571,8 +571,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // next refresh: project names always resolve at render time, never cached.
   registerCommand('lalog.renameProject', async (id: unknown) => {
     const list = projectRegistry.list();
+    // Palette fallback targets THIS window's project so a single-mode window
+    // can never rename an invisible other-workspace project (ADR-030).
+    const wsPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    const wsKey = wsPath ? workspaceKey(wsPath) : undefined;
     const target =
       (typeof id === 'string' ? list.find((p) => p.id === id) : undefined) ??
+      (wsKey ? list.find((p) => p.workspaceKeys.includes(wsKey) && !p.archivedAt) : undefined) ??
       list.find((p) => !p.archivedAt) ??
       list[0];
     if (!target) {
