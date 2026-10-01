@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { ThresholdsMs } from '../core/config';
-import { Session, TrackedEvent, ClosedReason } from '../core/types';
+import { Session, TrackedEvent, ClosedReason, ActiveSpan } from '../core/types';
 import {
   Machine,
   newMachine,
@@ -14,7 +14,7 @@ import { ActivityTracker } from '../core/activityTracker';
 import { BreakpointDetector, BreakpointKind } from '../core/breakpoints';
 import { PromptCoordinator } from '../prompts/promptCoordinator';
 import { DescribeResult } from '../prompts/describeFlow';
-import { updateActiveSpan, trimToCutoff } from '../core/spans';
+import { updateActiveSpan, trimToCutoff, truncateToTotal } from '../core/spans';
 import { LaLogPaths, workspaceKey } from '../storage/store';
 import { DiffCapture } from '../capture/diffCapture';
 import { TerminalCapture } from '../capture/terminalCapture';
@@ -129,6 +129,7 @@ export class SessionManager implements vscode.Disposable {
     this.machine = newMachine();
     startSession(this.machine, now);
     this.lastProgressActiveMin = 0;
+    this.lastOutsideSpan = null;
     this.firstActivityAfterOpen = true;
     this.paused = false;
     this.scheduleSave();
@@ -182,6 +183,7 @@ export class SessionManager implements vscode.Disposable {
     startSession(this.machine, now);
     this.openSpanStart = null;
     this.lastProgressActiveMin = 0;
+    this.lastOutsideSpan = null;
     this.firstActivityAfterOpen = true; // recovery branch resets lastActivityAt to this event
     this.scheduleSave();
     this.onStateChanged();
@@ -192,6 +194,8 @@ export class SessionManager implements vscode.Disposable {
   private firstActivityAfterOpen = true;
   /** Earliest end of the current contiguous active run (span open end = lastActivityAt). */
   private openSpanStart: number | null = null;
+  /** Last window a 'still working' confirm closed as outside work (US-4.9 rollback target). */
+  private lastOutsideSpan: ActiveSpan | null = null;
   /** Cooldown: only re-arm the idle prompt after this time (ms epoch). */
   private lastIdleArmAt = 0;
   /** Guard against stacking idle prompts. */
@@ -365,6 +369,43 @@ export class SessionManager implements vscode.Disposable {
   }
 
   /**
+   * Set the live session's tracked total (US-4.9). Reduction only. Removal starts
+   * at the last confirmed-outside window, so a wrong 'still working' answer can
+   * be rolled back without eating the real work that followed it; the open run
+   * is finalized first (so it can be trimmed like any other span, never silently
+   * zeroed) and the clock restarts from the corrected base.
+   */
+  async adjustTrackedTime(targetMs: number): Promise<void> {
+    if (!this.session) throw new RangeError('no live session to adjust');
+    if (targetMs < 0 || targetMs > this.machine.activeMinutes) {
+      throw new RangeError(`targetMs ${targetMs} is outside 0..${this.machine.activeMinutes}`);
+    }
+    const now = Date.now();
+    this.closeOpenSpanAt(this.machine.lastActivityAt ?? now);
+    const res = truncateToTotal(
+      this.session.activeSpans,
+      this.machine.activeMinutes,
+      this.session.activityTs,
+      targetMs,
+      this.lastOutsideSpan ?? undefined
+    );
+    this.session.activeSpans = res.spans;
+    this.session.activityTs = res.activityTs;
+    this.session.activeMinutes = res.activeMinutes;
+    this.machine.activeMinutes = res.activeMinutes;
+    this.machine.lastActivityAt = now;
+    this.session.lastActivityAt = now;
+    this.openSpanStart = null;
+    this.lastOutsideSpan = null;
+    this.lastProgressActiveMin = res.activeMinutes;
+    if (this.machine.state === 'wrapPending' && res.activeMinutes < this.th.wrapAt) {
+      this.machine.state = 'active';
+    }
+    this.scheduleSave();
+    this.onStateChanged();
+  }
+
+  /**
    * 'Are you still there?' — called from the heartbeat. If the user has been
    * idle >= idleConfirm and confirms they're still working (e.g. outside VS
    * Code), the idle period counts as active but has no VS Code activity, so
@@ -447,6 +488,7 @@ export class SessionManager implements vscode.Disposable {
     this.closeOpenSpanAt(m.lastActivityAt);
     if (now > m.lastActivityAt) {
       this.session.activeSpans.push({ start: m.lastActivityAt, end: now });
+      this.lastOutsideSpan = { start: m.lastActivityAt, end: now };
       m.activeMinutes += now - m.lastActivityAt;
     }
     this.session.activeMinutes = m.activeMinutes;
@@ -636,6 +678,7 @@ export class SessionManager implements vscode.Disposable {
     this.session = null;
     this.machine = newMachine();
     this.openSpanStart = null;
+    this.lastOutsideSpan = null;
     this.firstActivityAfterOpen = true;
     this.onStateChanged();
     return s;
@@ -659,6 +702,7 @@ export class SessionManager implements vscode.Disposable {
     this.machine = newMachine();
     startSession(this.machine, now);
     this.lastProgressActiveMin = 0;
+    this.lastOutsideSpan = null;
     this.firstActivityAfterOpen = true;
     this.scheduleSave();
     this.onStateChanged();

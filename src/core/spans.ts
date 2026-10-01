@@ -5,6 +5,14 @@ export interface SpanUpdate {
   closed: ActiveSpan | null;
 }
 
+export interface TrackedAdjust {
+  spans: ActiveSpan[];
+  activeMinutes: number;
+  activityTs: number[];
+  /** End of the last surviving span, or null when nothing is left. */
+  tailEnd: number | null;
+}
+
 /**
  * Pure span-builder: given the previous activity time and the current one,
  * update the open active span (contiguous gap fewer than idleGapMs) or close it.
@@ -78,5 +86,65 @@ export function trimToCutoff(
     openSpanStart: null,
     activeMinutes: total,
     activityTs: trimmedTs,
+  };
+}
+
+/** End of the last span, or null when the list is empty. */
+export function tailEndOf(spans: ActiveSpan[]): number | null {
+  return spans.length ? spans[spans.length - 1].end : null;
+}
+
+/**
+ * Pure reduction: cut a session's tracked total down to `targetMs`. The delta is
+ * removed from the tail, except that `preferredSuffix` — the window a wrong
+ * 'still working' confirm closed as outside work — goes first, so rolling that
+ * decision back drops the away window and spares the real work after it. A span
+ * is never split at its start: time only ever leaves a span from its end.
+ * `activeMinutes` is the honest sum of the surviving spans.
+ */
+export function truncateToTotal(
+  spans: ActiveSpan[],
+  activeMinutes: number,
+  activityTs: number[],
+  targetMs: number,
+  preferredSuffix?: ActiveSpan
+): TrackedAdjust {
+  if (targetMs < 0 || targetMs > activeMinutes) {
+    throw new RangeError(`targetMs ${targetMs} is outside 0..${activeMinutes}`);
+  }
+  const work = spans.map((s) => ({ start: s.start, end: s.end }));
+  let toRemove = activeMinutes - targetMs;
+
+  // 1. The confirmed-outside window goes first, before any tail truncation.
+  if (toRemove > 0 && preferredSuffix) {
+    const idx = work.findIndex(
+      (s) => s.start === preferredSuffix.start && s.end === preferredSuffix.end
+    );
+    if (idx >= 0) {
+      const take = Math.min(work[idx].end - work[idx].start, toRemove);
+      work[idx].end -= take;
+      toRemove -= take;
+      if (work[idx].end <= work[idx].start) work.splice(idx, 1);
+    }
+  }
+
+  // 2. Whatever is still owed comes off the tail, oldest-last span first.
+  for (let i = work.length - 1; i >= 0 && toRemove > 0; i--) {
+    const take = Math.min(work[i].end - work[i].start, toRemove);
+    work[i].end -= take;
+    toRemove -= take;
+    if (work[i].end <= work[i].start) work.splice(i, 1);
+  }
+
+  const kept = work.filter((s) => s.end > s.start);
+  let total = 0;
+  for (const span of kept) total += span.end - span.start;
+  const tailEnd = tailEndOf(kept);
+
+  return {
+    spans: kept,
+    activeMinutes: total,
+    activityTs: tailEnd === null ? [] : activityTs.filter((t) => t <= tailEnd),
+    tailEnd,
   };
 }

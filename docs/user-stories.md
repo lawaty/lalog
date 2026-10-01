@@ -341,6 +341,18 @@ Acceptance criteria are the observable, testable conditions that make the story 
 - Given a session with progress-update notes, then one always-visible, timestamped row per note sits under the header (oldest first); the rest of the detail lives in the detail document.
 - Given a session, then at most one extra action row appears: "Not background work anymore" for a background session, or "Keep as background work" for one that still needs a description.
 
+### US-4.9 — Adjust a session's tracked time
+
+**As a** developer who answered the idle prompt wrong, **I want** to lower a session's tracked time, **so that** a misclick doesn't keep billing me for time I wasn't there.
+
+**Acceptance criteria**
+- Given any session, then I can set its tracked total to a whole number of minutes from the ⏱ button on its row (or the ⏱ button in the Now box for the live session), with the current total pre-filled.
+- Reduction only: the value must be a whole number of minutes between 0 and the current total; anything larger is rejected and nothing is written.
+- Given the live session, then the correction goes through the tracker, the session keeps running, and time accrues again from the corrected total.
+- Given a closed session, then the corrected total, spans, and activity timestamps are persisted and every derived number (row, day totals, insights, status bar) updates immediately.
+- Given a wrong "Yes, still working" on the idle prompt, then the away window it closed is the time removed first, so real work after the return is spared.
+- After the adjustment, the session's spans still sum to its tracked total.
+
 ---
 
 ## 5. Projects
@@ -609,7 +621,7 @@ These are deliberately **not** stories LaLog will satisfy. See [Roadmap](roadmap
 | 1. Session Tracking & Time | [Session Tracking](features.md#session-tracking) | [ADR-001](decisions.md#adr-001-sessions-are-not-day-bound), [ADR-003](decisions.md#adr-003-gap-based-active-time-model), [ADR-007](decisions.md#adr-007-auto-close-uses-lastactivityat), [ADR-010](decisions.md#adr-010-the-only-boundary-is-2h-idle), [ADR-012](decisions.md#adr-012-active-only-tracking-with-idle-confirmation), [ADR-022](decisions.md#adr-022-hard-1h-stale-session-cutoff--no-continuation) |
 | 2. Automatic Event Capture | [Automatic Event Capture](features.md#automatic-event-capture) | [ADR-018](decisions.md#adr-018-technical-detail-capture) |
 | 3. Descriptions & Prompts | [Prompt System](features.md#prompt-system) | [ADR-006](decisions.md#adr-006-breakpoint-aligned-prompt-delivery), [ADR-017](decisions.md#adr-017-never-prompt-about-a-closed-session), [ADR-019](decisions.md#adr-019-no-description-prompts-on-close--text-first-describe), [ADR-020](decisions.md#adr-020-remove-the-describe-before-exit-prompt), [ADR-021](decisions.md#adr-021-remove-the-on-start-description-prompt) |
-| 4. User Interface | [User Interface](features.md#user-interface) | [ADR-023](decisions.md#adr-023-confirmed-session-deletion-full-file-rewrite-no-fallback), [ADR-025](decisions.md#adr-025-session-detail-as-an-untitled-markdown-document) |
+| 4. User Interface | [User Interface](features.md#user-interface) | [ADR-023](decisions.md#adr-023-confirmed-session-deletion-full-file-rewrite-no-fallback), [ADR-025](decisions.md#adr-025-session-detail-as-an-untitled-markdown-document), [ADR-031](decisions.md#adr-031-tracked-time-is-reduction-only-with-outside-window-first-removal) |
 | 5. Projects | [Projects](features.md#projects) | [ADR-014](decisions.md#adr-014-projects-as-a-derived-workspace-registry), [ADR-029](decisions.md#adr-029-a-single-implicit-workspace-project-multi-project-is-opt-in), [ADR-030](decisions.md#adr-030-per-workspace-projects-replace-the-single-project-union) |
 | 6. Insights & Reporting | [Reporting](features.md#reporting) | [ADR-002](decisions.md#adr-002-session-centric-reporting), [ADR-015](decisions.md#adr-015-insights-as-pure-aggregations), [ADR-024](decisions.md#adr-024-hand-rolled-pdf-writer-zero-new-dependencies), [ADR-027](decisions.md#adr-027-one-local-day-key-everywhere), [ADR-028](decisions.md#adr-028-timeline-slots-carry-session-identity) |
 | 7. Integrations | [Integrations](features.md#integrations) | — |

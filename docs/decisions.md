@@ -786,6 +786,33 @@ export function thresholdsMs(cfg: WorklogConfig): ThresholdsMs {
 
 ---
 
+## ADR-031: Tracked Time Is Reduction-Only, With Outside-Window-First Removal
+
+**Status**: Accepted
+
+**Context**: the idle prompt (US-1.3) asks whether the user is still working, and "Yes, still working" bills the idle stretch as outside-VS-Code work — the one prompt whose answer permanently changes the number. Answer it wrong and the away window is now a closed active span with no way back: `lalog.editSession` only edits text, so the total stays inflated for that session and for every report, insight, and project rollup derived from it. The tracked total was otherwise the one figure the user could not touch, which is exactly backwards for a log whose whole promise is that the human is the author of record.
+
+**Decision**:
+1. **One pure reducer, `truncateToTotal` in `src/core/spans.ts`** — `(spans, activeMinutes, activityTs, targetMs, preferredSuffix?)` returns the surviving spans, the honest `sum(spans)`, `activityTs` filtered to `<= tailEnd`, and `tailEnd` (via the exported `tailEndOf`). It is a function of its arguments only: no clock, no store, no manager, so the same code serves the live and closed paths and the test suite needs no harness to prove the arithmetic.
+2. **Reduction only.** `0 <= targetMs <= activeMinutes`, `RangeError` otherwise, and the input box validates a whole number of minutes in `0..current`. LaLog never invents tracked time it did not observe, and `sum(spans) === activeMinutes` is the invariant that gets written back.
+3. **The confirmed-outside window is removed first.** `accrueOutsideConfirmed` remembers the span it closed as `lastOutsideSpan`; the reducer consumes its length before touching the tail. A wrong "Yes, still working" is therefore rolled back exactly: the away window vanishes, and the real work recorded after the return is spared and keeps accruing from the corrected base. Everything else is plain backward truncation from the tail, shrinking each span only from its `end`; a span's `start` is never moved, so no new time is fabricated to fill a hole.
+4. **Live edits route through `SessionManager.adjustTrackedTime`, never the store.** Writing `active/<wsKey>.json` (or `sessions.jsonl`) directly would be undone by the very next heartbeat save, since the manager's in-memory total is the source of truth for the live session. The method first finalizes the in-progress run (`closeOpenSpanAt`) so the still-open stretch takes part in the truncation instead of being silently zeroed — a continuous four-hour session has no closed spans at all, and dropping them would answer every target with `0:00` — then rewrites the session and machine together, resets `lastActivityAt` to now (the gap since the last event is never billed), clears `lastOutsideSpan` so a second adjust can't hit a span that no longer exists, re-bases `lastProgressActiveMin` to avoid a duplicate progress prompt, and downgrades `wrapPending → active` when the corrected total is back under `th.wrapAt`. `lastOutsideSpan` is also cleared wherever a session is finalized or a fresh one starts.
+5. **Closed sessions take a plain path.** The command runs `truncateToTotal` without a `preferredSuffix` (closed sessions carry no outside-window metadata) and writes only `activeSpans` / `activeMinutes` / `activityTs` / `lastActivityAt` through `SessionStore.updateSession` — every other field, and the technical sidecar, is left exactly as it was — then refreshes via the existing `refreshStatus()`.
+6. **Targeting is exact; the palette falls back.** A string argument is matched exactly against `store.loadAll()` ("Session not found." otherwise), consistent with ADR-023. With no argument (command palette, Now box) the target is the live session, else the latest closed one, else "No sessions recorded yet."
+
+**Rationale**:
+- Append-only storage (ADR-004) buys credibility: nothing in the log is quietly re-derived or re-timed, and the codemap's in/outside split stays a pure function of spans. A user who disagrees with a number must be able to correct it without editing JSON by hand, but only downward — the tracker cannot certify work that never happened, and a symmetric "add time" feature would be a time-entry tool, not a tracker.
+- Removing the outside window first is what makes the feature a *rollback* rather than a generic shave. Tail-only truncation would delete the user's genuine post-return work to pay for an away window; the saved `lastOutsideSpan` spends the correction where the mistake was made.
+- Routing live edits through the manager keeps exactly one writer per session, so a correction can never race the heartbeat.
+
+**Implementation**: `src/core/spans.ts` (`TrackedAdjust`, `tailEndOf`, `truncateToTotal`), `src/core/sessionManager.ts` (`lastOutsideSpan` set in `accrueOutsideConfirmed` and cleared in `openWorkspace` / `ensureSessionOnActivity` / `endSession` / `startFresh` / `adjustTrackedTime`; `adjustTrackedTime`), `src/extension.ts` (`lalog.adjustTrackedTime`), `src/ui/panelView.ts` (⏱ row button, `btnAdjust` in the Now box, `case 'adjust'` / `case 'adjustLive'`), `test/helpers/mockVscode.ts` (`showErrorMessage`), `package.json` (command contribution).
+
+**Future**: `lastOutsideSpan` is in-memory only, so a *closed* session's wrongly-billed window is no longer distinguishable from real work and is trimmed like any other tail. Persisting the confirmed-outside window on the session would make the rollback exact after a restart too; that is a schema change, so it waits for a real report of the gap.
+
+**Test coverage**: `test/userStories/adjustTime.test.ts` — US-4.9 (pure reducer: single-span cut, multi-span cut with an emptied span, outside-window-first with the post-return tail spared, outside-window plus extra demand, a stale suffix ignored, no-op, zero target, `activityTs` filtering, the `sum === target` invariant, and `RangeError` on both out-of-range ends; live: the wrong-confirm rollback through the manager with only the new gap accruing afterwards and the heartbeat unable to resurrect the dropped time, a second adjustment, and growth refused; command: closed-session rewrite, live targeting from the Now box, cancel / unchanged / growth writing nothing, and an unknown id never falling back to the latest session).
+
+---
+
 ## Related Pages
 
 - [Architecture](architecture.md) — module overview and data flow

@@ -232,6 +232,12 @@ export class LaLogPanelProvider implements vscode.WebviewViewProvider {
       case 'delete':
         if (id) void vscode.commands.executeCommand('lalog.deleteSession', id);
         return;
+      case 'adjust':
+        if (id) void vscode.commands.executeCommand('lalog.adjustTrackedTime', id);
+        return;
+      case 'adjustLive':
+        void vscode.commands.executeCommand('lalog.adjustTrackedTime');
+        return;
       case 'openSessionDetail':
         if (id) void vscode.commands.executeCommand('lalog.sessionDetail', id);
         return;
@@ -541,6 +547,7 @@ export class LaLogPanelProvider implements vscode.WebviewViewProvider {
       <div class="actions">
         <button class="warn" id="btnPause">Pause</button>
         <button class="warn hidden" id="btnResume">Resume</button>
+        <button class="editbtn hidden" id="btnAdjust" title="Adjust tracked time">⏱</button>
         <button class="danger" id="btnEnd" title="End this session &amp; start a fresh one">End</button>
       </div>
     </div>
@@ -578,6 +585,7 @@ export class LaLogPanelProvider implements vscode.WebviewViewProvider {
 
   el('btnPause').addEventListener('click', () => vscode.postMessage({ type: 'pause' }));
   el('btnResume').addEventListener('click', () => vscode.postMessage({ type: 'resume' }));
+  el('btnAdjust').addEventListener('click', () => vscode.postMessage({ type: 'adjustLive' }));
   el('btnEnd').addEventListener('click', () => vscode.postMessage({ type: 'end' }));
   el('btnProject').addEventListener('click', () => {
     if (lastState && lastState.active) vscode.postMessage({ type: 'assign', id: lastState.active.id });
@@ -705,6 +713,10 @@ export class LaLogPanelProvider implements vscode.WebviewViewProvider {
     delBtn.title = 'Delete session';
     delBtn.addEventListener('click', (e) => { e.stopPropagation(); vscode.postMessage({ type: 'delete', id: s.id }); });
     header.appendChild(delBtn);
+    const adjustBtn = el2('button', 'editbtn', '\u23f1');
+    adjustBtn.title = 'Adjust tracked time';
+    adjustBtn.addEventListener('click', (e) => { e.stopPropagation(); vscode.postMessage({ type: 'adjust', id: s.id }); });
+    header.appendChild(adjustBtn);
     header.title = 'Open session detail';
     header.addEventListener('click', () => vscode.postMessage({ type: 'openSessionDetail', id: s.id }));
     wrap.appendChild(header);
@@ -990,6 +1002,7 @@ export class LaLogPanelProvider implements vscode.WebviewViewProvider {
       el('active').textContent = fmtClock(Date.now());
       el('btnPause').classList.toggle('hidden', paused);
       el('btnResume').classList.toggle('hidden', !paused);
+      el('btnAdjust').classList.remove('hidden');
     } else {
       el('projname').textContent = 'No project';
       el('projdot').style.background = 'transparent';
@@ -1003,6 +1016,7 @@ export class LaLogPanelProvider implements vscode.WebviewViewProvider {
       el('active').textContent = fmtClock(Date.now());
       el('btnPause').classList.add('hidden');
       el('btnResume').classList.add('hidden');
+      el('btnAdjust').classList.add('hidden');
     }
     el('today').textContent = fmtDur(st.todayActiveMs) + ' today';
   }

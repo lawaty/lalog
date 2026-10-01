@@ -28,6 +28,7 @@ import { exportFilesByDay } from './integrations/legacyExport';
 import { LaLogAiService, OpencodePreflightError } from './opencode/service';
 import type { AnalysisResult } from './opencode/service';
 import { Session } from './core/types';
+import { truncateToTotal } from './core/spans';
 import { resolveProject } from './core/projects';
 
 let manager: SessionManager;
@@ -473,6 +474,62 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       });
       await refreshStatus();
     }
+  });
+
+  registerCommand('lalog.adjustTrackedTime', async (id: unknown) => {
+    const live = manager.getSession();
+    const all = await store.loadAll();
+    // Palette / Now-box call passes no id: the live session, else the latest
+    // closed one. A passed id is matched exactly (ADR-023) — never a fallback.
+    const target =
+      typeof id === 'string' ? all.find((s) => s.id === id) : live ?? all[all.length - 1];
+    if (!target) {
+      vscode.window.showInformationMessage(
+        typeof id === 'string' ? 'Session not found.' : 'No sessions recorded yet.'
+      );
+      return;
+    }
+    const currentMin = Math.round(target.activeMinutes / 60000);
+    const answer = await vscode.window.showInputBox({
+      title: `Adjust tracked time — ${target.workspaceName}`,
+      value: String(currentMin),
+      prompt: 'Tracked minutes (reduction only)',
+      ignoreFocusOut: true,
+      validateInput: (value: string) =>
+        /^\d+$/.test(value) && Number(value) <= currentMin
+          ? undefined
+          : `Enter whole minutes from 0 to ${currentMin}.`,
+    });
+    if (answer === undefined) return;
+    const minutes = Number(answer);
+    if (minutes === currentMin) {
+      vscode.window.showInformationMessage('No change.');
+      return;
+    }
+    const targetMs = minutes * 60000;
+    if (targetMs > target.activeMinutes) {
+      vscode.window.showErrorMessage(
+        `Tracked time can only be reduced — this session has ${currentMin} min.`
+      );
+      return;
+    }
+    if (live && live.id === target.id) {
+      // The live session must go through the manager: the next heartbeat save
+      // would otherwise write the in-memory total back over the store.
+      await manager.adjustTrackedTime(targetMs);
+      vscode.window.showInformationMessage(
+        'Tracked time adjusted — the session keeps tracking from now.'
+      );
+      return;
+    }
+    const res = truncateToTotal(target.activeSpans, target.activeMinutes, target.activityTs, targetMs);
+    await store.updateSession(target.id, {
+      activeSpans: res.spans,
+      activeMinutes: res.activeMinutes,
+      activityTs: res.activityTs,
+      lastActivityAt: res.tailEnd ?? target.lastActivityAt,
+    });
+    await refreshStatus();
   });
 
   registerCommand('lalog.deleteSession', async (id: unknown) => {

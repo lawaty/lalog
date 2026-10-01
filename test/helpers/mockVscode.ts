@@ -62,6 +62,7 @@ let quickPickGated = false;
 let quickPickGateResolve: ((v: any) => void) | null = null;
 let promptCalls: PromptCall[] = [];
 let infoMessages: string[] = [];
+let errorMessages: string[] = [];
 let warningMessages: string[] = [];
 let nextWarningChoices: (string | undefined)[] = [];
 let warningCalls: { msg: string; options?: any; buttons: string[] }[] = [];
@@ -210,6 +211,10 @@ export const window = {
     infoMessages.push(msg);
     return undefined;
   },
+  showErrorMessage: async (msg: string, ..._rest: any[]) => {
+    errorMessages.push(msg);
+    return undefined;
+  },
   showWarningMessage: async (msg: string, ...rest: any[]) => {
     warningMessages.push(msg);
     warningCalls.push({
@@ -300,6 +305,9 @@ export const mockVscode = {
   get _infoMessages() {
     return infoMessages;
   },
+  get _errorMessages() {
+    return errorMessages;
+  },
   get _warningMessages() {
     return warningMessages;
   },
@@ -333,6 +341,7 @@ export const mockVscode = {
     quickPickGateResolve = null;
     promptCalls = [];
     infoMessages = [];
+    errorMessages = [];
     warningMessages = [];
     nextWarningChoices = [];
     warningCalls = [];
