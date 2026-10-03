@@ -23,7 +23,7 @@
 
 LaLog is built on five principles:
 
-1. **Passive capture, active description** — The extension captures events (edits, saves, terminal, file ops, debug, tasks) automatically. The human only provides descriptions at natural breakpoints.
+1. **Passive capture, active description** — The extension captures events (edits, saves, terminal, file ops, debug, tasks, and — opt-in — opencode chat activity) automatically. The human only provides descriptions at natural breakpoints.
 2. **Sessions are engagement threads** — Not day-bound. An overnight coding session from 22:00 to 02:00 is one session. The only boundary is idle: a session is force-closed after `staleSessionAfterMinutes` (default 60) of no activity and a fresh session starts (the 2h auto-close safety net is capped at that cutoff).
 3. **Never trust interval timers; confirm idle** — Active time is computed from event gaps, not `setInterval`. If you step away for more than 15 minutes, that gap is not counted — unless you confirm "Are you still there?", in which case the idle stretch counts as active but *outside* VS Code (tagless spans classified at report time). Saying "I was away" instead trims that idle stretch and resumes tracking.
 4. **Breakpoint-aligned prompting** — Prompts are held until a natural pause (terminal command ends, debug session terminates, return from idle). No interrupting flow.
@@ -83,6 +83,11 @@ flowchart TB
         LEG["legacyExport.ts<br/>files_by_day.txt export"]
     end
 
+    subgraph opencode["opencode/"]
+        SW["serveWatcher.ts<br/>Reads opencode serve session metadata<br/>(gated, two-tier, adaptive)"]
+        SP["serveProcess.ts<br/>Discover / spawn / stop<br/>(owned serve only)"]
+    end
+
     subgraph ui["ui/"]
         SB["statusBar.ts<br/>Status bar item"]
         SV["panelView.ts<br/>Webview panel (Sessions/Insights/Projects)"]
@@ -97,6 +102,7 @@ flowchart TB
     EXT --> SED
     EXT --> LEG
     EXT --> GIT
+    EXT --> SW
 
     SEM --> SM
     SEM --> AT
@@ -117,6 +123,8 @@ flowchart TB
     SB --> AGG
 ```
 
+`extension.ts` is the composition root: it constructs `opencode/serveWatcher.ts` when `lalog.opencode.activity.enabled` is true and injects it into `SessionManager` as the core-owned `ServeActivityWatcher` interface. `core/` never imports `opencode/` (ADR-011), so serve observation (ADR-032) stays an independent opt-in from the `opencode run` AI bridge. The watcher also receives a `shouldObserve` predicate — `manager.getSession() !== null` — so it keeps no timer and sends no requests while nothing is being tracked, and `wake()` on every session state change so tracking resumes the moment it is needed.
+
 ### Module Responsibilities
 
 | Module | Files | Responsibility |
@@ -127,6 +135,7 @@ flowchart TB
 | **storage/** | `sessionStore.ts`, `projectRegistry.ts`, `store.ts`, `technicalStore.ts` | Session CRUD (including confirmed deletion via raw-line rewrite), JSONL append, atomic snapshots, curated `projects.json` registry (atomic rewrite) with the per-workspace project resolution (`ensureWorkspaceProject`, `setNameTracked`, one-time `.pre-split.bak` split, `Project.nameSource` auto-vs-user), per-session technical sidecar JSONL with diffs-only retention (`pruneDiffEntriesBefore`; terminal/AI entries are kept forever), filesystem primitives |
 | **reporting/** | `aggregate.ts`, `report.ts`, `sessionDetail.ts`, `pdf.ts`, `pdfReport.ts`, `insights.ts`, `ranges.ts`, `spans.ts` | Today's active/untracked time, session-centric markdown reports (project scope, custom range, hourly log), session and day documents (`renderSessionDetail` / `renderDayDiffs` — untitled markdown previews), dependency-free PDF export (base-14 fonts, byte-deterministic) with personal/client presets and per-detail toggles, pure period aggregations + hour timeline whose cells carry per-project parts and session ids, range math and the single local `dayKey`, in/out-of-VS-Code split |
 | **integrations/** | `git.ts`, `legacyExport.ts` | Git branch/commit annotation, legacy `files_by_day.txt` export |
+| **opencode/** | `serveWatcher.ts`, `serveProcess.ts` | Gated, adaptive poller of a localhost `opencode serve` emitting `opencode` activity events, injected as the core-owned `ServeActivityWatcher`; it polls in two tiers — a cheap `GET /session/{id}` per tracked session on the fast cadence, and the full `GET /session` list only every `discoverySec` to discover brand-new chats (a list is ~68 KB and ~164-283 ms of server CPU against ~540 B and ~48 ms per session), skipping any tracked session untouched for a whole window and issuing a tick's requests sequentially; plus the process lifecycle behind it — discovery of a serve already serving the workspace, spawning one only if there is none, and stopping only a serve it owns (a module-private brand makes signalling anything else unrepresentable). Neither file imports `vscode` (ADR-032, ADR-033) |
 | **ui/** | `statusBar.ts`, `panelView.ts` | Status bar (live duration + description), single webview panel — **Sessions / Insights / Projects** tabs (scrollable, day-grouped sessions with project filter chips + anonymous states, compact rows that open a session-detail document, ✎/🗑 row actions, timeline hour slots that open the sessions behind an hour and day rows that open that day's diffs), with the "Current Session" card as a fixed non-scrolling footer |
 
 ---
@@ -178,6 +187,8 @@ flowchart LR
 5. **PromptCoordinator** enforces mutex (one prompt visible at a time) and minimum spacing
 6. **DescribeFlow / WrapPrompt** presents the UI (InputBox → QuickPick)
 7. **SessionStore** persists to JSONL (closed sessions) or atomic snapshot (active sessions)
+
+The opencode serve watcher (`opencode/serveWatcher.ts`) is one **additional source**, not VS Code: when `lalog.opencode.activity.enabled` is on it reads session metadata on a localhost `opencode serve` — `GET /session/{id}` per tracked session on the fast cadence, the full `GET /session` list only every `discoverySec` — and feeds the same `onActivityEvent` path from step 3, so accrual, idle confirmation and the stale cutoff are shared unchanged. Loopback and metadata only, off by default (ADR-032). With `lalog.opencode.activity.manageServe` on it is also the *client* of `opencode/serveProcess.ts`: reuse a serve already serving this workspace, otherwise start one (loopback, workspace root, random password, port chosen by opencode) and stop only that one again when no session is being tracked (ADR-033). Discovery is best-effort and silent — a miss simply means LaLog starts its own.
 
 ---
 

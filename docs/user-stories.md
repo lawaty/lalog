@@ -169,6 +169,7 @@ Acceptance criteria are the observable, testable conditions that make the story 
 - Given I save a file, then a unified diff is captured (new-file diff on first save, patch afterwards), redacted and capped at `maxDiffChars`.
 - Given a binary file or an identical save, then no diff entry is produced.
 - Given many files, then at most 100 paths are tracked (LRU eviction).
+- Given a file larger than 256KB, then only its first save produces a diff entry — the oversized text is not cached, so later saves of that path are not diffed.
 
 ### US-2.6 — Log AI interaction metadata only
 
@@ -504,6 +505,25 @@ Acceptance criteria are the observable, testable conditions that make the story 
 **Acceptance criteria**
 - Given a git workspace, when a session ends, then the current branch and commits within the session window are attached (best-effort; failures are silent).
 
+### US-7.2 — My opencode chat keeps my session alive
+
+**As a** developer who works with the opencode CLI/TUI, **I want** LaLog to notice when I have an opencode chat open in this workspace, **so that** a live conversation is never mistaken for idle work.
+
+**Acceptance criteria**
+- Given `lalog.opencode.activity.enabled` and a local `opencode serve` serving this workspace, then LaLog records at most one `opencode` event per poll — only when a session it has already seen, in this workspace, has a newer `time.updated` (first sight is a baseline, never an event; sessions titled `LaLog …` are LaLog's own runs and are ignored).
+- Given the load the polling puts on my own machine, then the frequent poll asks only for the sessions LaLog already tracks (`GET /session/{id}`), a tracked session untouched for a whole discovery window is not re-fetched at all, and the full list (`GET /session`) is read only every `lalog.opencode.activity.discoverySec` (default 3 min) — so a list is never fetched on the fast 30 s cadence.
+- Given a chat I have just started, then it is noticed within `discoverySec` (a new chat can only be found by listing) and adopted as a baseline without emitting, so nothing is double-counted.
+- Given several tracked sessions, then one tick issues its requests one at a time — never a parallel fan-out — and never asks for the same session twice in a tick.
+- Given no open LaLog session, then no request of any kind is made, at either tier.
+- Given the same events, then they count like any other activity: idle confirmation, accrual and the stale cutoff all behave exactly as they do for terminal work, so a live chat is never asked about or cut off.
+- Given the setting is off (the default), then nothing is polled and no request is made; the setting is independent of `lalog.ai.enabled` — a chat keeps a session alive with AI off, and turning AI off does not disable it.
+- Given the server is not running or the poll fails, then LaLog retries silently and re-baselines after an outage, so no time is ever counted for a period it did not observe.
+- Given `lalog.opencode.activity.manageServe` (on by default) and a serve already running for this workspace, then LaLog finds and reuses it instead of starting a second one, and never restarts or reconfigures it.
+- Given `manageServe` and no serve running for this workspace, then LaLog starts one itself — on `127.0.0.1`, in the workspace root, with a random password it never stores — waits until it actually answers, and stops that serve again when it is no longer needed.
+- Given a serve LaLog did not start, then there is no way for LaLog to signal it: stopping requires an owned handle, and nothing else is ever killed, restarted, or written to.
+- Given nothing to gain from polling (no open LaLog session, or the workspace is quiet), then polling backs off up to ~5 minutes per step and stops entirely when no session is open — and any activity or new session brings it straight back.
+- Given discovery or startup fails, then nothing is surfaced to me, no server is left behind, and no time is counted for the gap.
+
 ---
 
 ## 8. Privacy, Data & Configuration
@@ -624,7 +644,7 @@ These are deliberately **not** stories LaLog will satisfy. See [Roadmap](roadmap
 | 4. User Interface | [User Interface](features.md#user-interface) | [ADR-023](decisions.md#adr-023-confirmed-session-deletion-full-file-rewrite-no-fallback), [ADR-025](decisions.md#adr-025-session-detail-as-an-untitled-markdown-document), [ADR-031](decisions.md#adr-031-tracked-time-is-reduction-only-with-outside-window-first-removal) |
 | 5. Projects | [Projects](features.md#projects) | [ADR-014](decisions.md#adr-014-projects-as-a-derived-workspace-registry), [ADR-029](decisions.md#adr-029-a-single-implicit-workspace-project-multi-project-is-opt-in), [ADR-030](decisions.md#adr-030-per-workspace-projects-replace-the-single-project-union) |
 | 6. Insights & Reporting | [Reporting](features.md#reporting) | [ADR-002](decisions.md#adr-002-session-centric-reporting), [ADR-015](decisions.md#adr-015-insights-as-pure-aggregations), [ADR-024](decisions.md#adr-024-hand-rolled-pdf-writer-zero-new-dependencies), [ADR-027](decisions.md#adr-027-one-local-day-key-everywhere), [ADR-028](decisions.md#adr-028-timeline-slots-carry-session-identity) |
-| 7. Integrations | [Integrations](features.md#integrations) | — |
+| 7. Integrations | [Integrations](features.md#integrations) | [ADR-032](decisions.md#adr-032-opencode-serve-activity-is-observed-never-managed) |
 | 8. Privacy, Data & Configuration | [Storage & Persistence](features.md#storage--persistence), [Configuration](features.md#configuration) | [ADR-004](decisions.md#adr-004-jsonl-append-only-storage), [ADR-005](decisions.md#adr-005-local-only--zero-telemetry), [ADR-008](decisions.md#adr-008-debugtimescale-for-testing), [ADR-009](decisions.md#adr-009-heartbeat--snapshot-persistence), [ADR-026](decisions.md#adr-026-diffs-only-technical-retention) |
 | 9. Optional AI Assistance | [Optional AI Assistance](README.md#optional-ai-assistance) | [ADR-011](decisions.md#adr-011-optional-ai-assistance-amends-adr-005) |
 

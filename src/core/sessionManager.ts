@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { ThresholdsMs } from '../core/config';
-import { Session, TrackedEvent, ClosedReason, ActiveSpan } from '../core/types';
+import { Session, TrackedEvent, ClosedReason, ActiveSpan, ServeActivityWatcher } from '../core/types';
 import {
   Machine,
   newMachine,
@@ -39,6 +39,8 @@ export class SessionManager implements vscode.Disposable {
   private technicalStore: TechnicalStore;
   private captureCfg: { captureDiffs: boolean; captureTerminal: boolean; captureAiLog: boolean };
   private onAiInteraction?: (e: TechnicalAiInteraction) => void;
+  /** Optional opencode-chat activity source, injected by extension.ts (US-7.2). */
+  private serveWatcher?: ServeActivityWatcher;
 
   constructor(
     private store: SessionStore,
@@ -75,6 +77,15 @@ export class SessionManager implements vscode.Disposable {
 
   setOnStateChanged(cb: () => void): void {
     this.onStateChanged = cb;
+  }
+
+  /**
+   * Attach an activity source LaLog does not own (the opencode serve watcher).
+   * Never constructed unless the user opts in, so with it off there is nothing
+   * to start, dispose, or fetch.
+   */
+  setServeWatcher(watcher: ServeActivityWatcher): void {
+    this.serveWatcher = watcher;
   }
 
   getSession(): Session | null {
@@ -213,7 +224,13 @@ export class SessionManager implements vscode.Disposable {
   /** Guard against concurrent stale closes (heartbeat + activity events). */
   private staleClosing = false;
 
-  private onActivityEvent(ev: TrackedEvent, filePath?: string, now?: number): void {
+  /**
+   * The single entry point for activity of any source: VS Code capture, the
+   * opencode serve watcher, anything else injected later. Everything downstream
+   * — stale re-dispatch, auto-start, accrual, counters, persistence, prompts —
+   * happens here exactly once.
+   */
+  onActivityEvent(ev: TrackedEvent, filePath?: string, now?: number): void {
     const ts = now ?? Date.now();
     if (this.paused) return; // explicitly paused: don't count, record, or reset timers
     // Hard stale cutoff (ADR-022): the first event after >= staleAfter of
@@ -741,6 +758,8 @@ export class SessionManager implements vscode.Disposable {
   start(): void {
     this.activity.start();
     this.breakpoints.start();
+    // Opencode chat activity (opt-in): the watcher only reports what it observed.
+    this.serveWatcher?.start();
     // Technical capture: terminal shell execution events
     if (this.captureCfg.captureTerminal) {
       const api = vscode.window as unknown as {
@@ -845,6 +864,7 @@ export class SessionManager implements vscode.Disposable {
 
   dispose(): void {
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    this.serveWatcher?.dispose();
     this.clearForceTimers();
     this.activity.dispose();
     this.breakpoints.dispose();
@@ -863,6 +883,7 @@ export class SessionManager implements vscode.Disposable {
     if (this.session) {
       await this.endSession('vscode-shutdown');
     }
+    this.serveWatcher?.dispose();
     this.clearForceTimers();
     this.activity.dispose();
     this.breakpoints.dispose();

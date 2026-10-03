@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { readConfig, thresholdsMs, readAiConfig, AiConfig } from './core/config';
+import { readConfig, thresholdsMs, readAiConfig, AiConfig, readOpencodeActivityConfig, opencodePollMs, opencodeSlowPollMs, opencodeDiscoveryMs } from './core/config';
 import { SessionManager } from './core/sessionManager';
 import { SessionStore } from './storage/sessionStore';
 import { TechnicalStore } from './storage/technicalStore';
@@ -26,12 +26,19 @@ import { ReportRange, rangeStart, rangeEnd, rangeLabel, dayKey } from './reporti
 import { renderDayDiffs, renderSessionDetail } from './reporting/sessionDetail';
 import { exportFilesByDay } from './integrations/legacyExport';
 import { LaLogAiService, OpencodePreflightError } from './opencode/service';
+import { ServeWatcher } from './opencode/serveWatcher';
 import type { AnalysisResult } from './opencode/service';
 import { Session } from './core/types';
 import { truncateToTotal } from './core/spans';
 import { resolveProject } from './core/projects';
 
 let manager: SessionManager;
+/**
+ * The opt-in opencode serve watcher, once it exists (see `activate`). Held here
+ * only so a state change can wake it when tracking resumes; the manager keeps
+ * single-owner lifecycle control (start on `start()`, `dispose()` on shutdown).
+ */
+let serveWatcher: ServeWatcher | null = null;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const cfg = readConfig();
@@ -94,6 +101,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Recompute status bar + panel on state changes.
   manager.setOnStateChanged(() => {
     void refreshStatus();
+    // Tracking just started (or resumed), so let the serve watcher re-arm if it
+    // parked itself while nothing was open. A no-op while it is polling.
+    serveWatcher?.wake();
   });
 
   let cachedTodayMs = 0;
@@ -670,6 +680,36 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     })
   );
 
+  // An opencode chat in this workspace is work (US-7.2 / ADR-032 → ADR-033).
+  // Opt-in and independent of `lalog.ai.enabled`: when the setting is off the
+  // watcher is never constructed — no timers, no fetch. It reads session
+  // metadata on loopback in two tiers (a cheap `GET /session/{id}` per tracked
+  // session at the fast cadence, a full `GET /session` list only every
+  // `discoverySec` to notice a brand-new chat), reusing a serve you already run
+  // and starting one only when `manageServe` is on and there is none to reuse
+  // (ADR-033). It never sends a prompt and never signals a serve it did not start.
+  // Read at activation, like the rest of the config; manager.start() starts it.
+  const activityCfg = readOpencodeActivityConfig();
+  if (activityCfg.enabled) {
+    serveWatcher = new ServeWatcher({
+      url: activityCfg.url,
+      pollMs: opencodePollMs(activityCfg.pollIntervalSec, cfg, th),
+      slowMs: opencodeSlowPollMs(cfg),
+      discoveryMs: opencodeDiscoveryMs(activityCfg.discoverySec, cfg, th),
+      roots: (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath),
+      authUser: activityCfg.authUser,
+      authPassword: activityCfg.authPassword,
+      manageServe: activityCfg.manageServe,
+      opencodePath: activityCfg.opencodePath,
+      spawnPort: activityCfg.spawnPort,
+      // Only poll while LaLog is actually tracking something in this window:
+      // no session open means no timer, no request, and no serve of our own.
+      shouldObserve: () => manager.getSession() !== null,
+      onActivity: (now) => manager.onActivityEvent('opencode', undefined, now),
+    });
+    manager.setServeWatcher(serveWatcher);
+  }
+
   manager.start();
 
   // Per-workspace project (ADR-030). Every distinct workspace gets its own
@@ -859,5 +899,8 @@ ${a.summary ?? ''}
 export async function deactivate(): Promise<void> {
   // End any active session (recorded as 'vscode-shutdown') so it isn't left as a
   // dangling recoverable snapshot. VS Code's deactivate() is synchronous and time-limited.
+  // manager.shutdown() also disposes the serve watcher, which stops the serve LaLog
+  // started (and only that one — a server it merely observes is left alone).
   await manager.shutdown();
+  serveWatcher = null;
 }

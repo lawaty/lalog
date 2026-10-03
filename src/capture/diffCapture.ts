@@ -11,9 +11,12 @@ import type { TechnicalDiff } from '../core/types';
 import { redactText } from './redactText';
 
 const MAX_TRACKED_PATHS = 100;
+// Internal cache cap for per-path text (bytes/characters). Do not expose as user config.
+const MAX_CACHED_TEXT_CHARS = 256 * 1024; // 256 KB
 
 export class DiffCapture {
   private lastContent: Map<string, string> = new Map();
+  private oversizedPaths: Set<string> = new Set();
 
   constructor(
     private maxDiffChars: number,
@@ -27,14 +30,24 @@ export class DiffCapture {
     if (sample.indexOf('\0') !== -1) return null;
 
     const before = this.lastContent.get(filePath);
-    const isNew = before === undefined;
+    const wasOversized = this.oversizedPaths.has(filePath);
+    const isNew = before === undefined && !wasOversized;
 
     let patch: string;
     if (isNew) {
-      // First save: emit a new-file diff (all lines added)
+      // First save (or first time seeing this path): emit a new-file diff (all lines added)
       patch = createTwoFilesPatch('/dev/null', filePath, '', currentText);
+    } else if (wasOversized) {
+      // A new-file diff was already emitted for this oversized path and no baseline is
+      // cached, so there is nothing to diff against. Re-arm normal tracking if the file
+      // has since shrunk under the cache cap.
+      if (currentText.length <= MAX_CACHED_TEXT_CHARS) {
+        this.oversizedPaths.delete(filePath);
+        this.lastContent.set(filePath, currentText);
+      }
+      return null;
     } else {
-      patch = createTwoFilesPatch(filePath, filePath, before, currentText);
+      patch = createTwoFilesPatch(filePath, filePath, before!, currentText);
       // If content is identical, skip
       if (patch.split('\n').length <= 5) return null;
     }
@@ -58,8 +71,15 @@ export class DiffCapture {
       truncated = true;
     }
 
-    // Update stored content
-    this.lastContent.set(filePath, currentText);
+    // Update stored content - only cache if under cap
+    if (currentText.length <= MAX_CACHED_TEXT_CHARS) {
+      this.lastContent.set(filePath, currentText);
+      this.oversizedPaths.delete(filePath);
+    } else {
+      // Do not store text; track as oversized
+      this.lastContent.delete(filePath);
+      this.oversizedPaths.add(filePath);
+    }
     this.evictIfNeeded();
 
     return {
@@ -76,6 +96,7 @@ export class DiffCapture {
   /** Clear all tracked file content (called on session end). */
   reset(): void {
     this.lastContent.clear();
+    this.oversizedPaths.clear();
   }
 
   /** Keep the map at most MAX_TRACKED_PATHS entries (LRU-ish: drop oldest). */
@@ -85,6 +106,7 @@ export class DiffCapture {
     const first = iter.next();
     if (!first.done) {
       this.lastContent.delete(first.value);
+      this.oversizedPaths.delete(first.value);
     }
   }
 }

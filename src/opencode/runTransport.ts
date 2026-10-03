@@ -30,6 +30,7 @@ interface ExecOutcome {
  * One-shot transport: `opencode run --format json` as a subprocess.
  * No server, no ports, no auth management — model credentials come from the
  * user's existing `opencode auth login`.
+ * ADR-032 adds a separate, opt-in observer that polls an already-running `opencode serve`; this transport still spawns no server.
  *
  * `spawn` with `stdio: ['ignore','pipe','pipe']` (stdin closed) is used because
  * `execFile`/`exec` hang waiting on opencode — the raw pipe is drained manually.

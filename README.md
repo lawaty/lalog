@@ -90,6 +90,7 @@ Data is written to `~/.lalog/`:
 | `lalog.describeAfterMinutes` | `90` | When the describe checkpoint fires |
 | `lalog.wrapAfterMinutes` | `210` | When the wrap-and-continue prompt fires |
 | `lalog.ai.enabled` | `false` | Opt into opencode-powered AI assistance |
+| `lalog.opencode.activity.enabled` | `false` | Opt into counting an open opencode chat in this workspace as activity — LaLog reuses a local `opencode serve`, or starts one for you and stops it again when idle ([ADR-033](docs/decisions.md#adr-033-reuse-first-opencode-serve-lifecycle-owned-or-not-at-all-amends-adr-032), US-7.2) |
 | `lalog.dataDir` | `~/.lalog` | Where everything is stored |
 | `lalog.captureDiffs` | boolean | `true` | Capture unified diffs at save time |
 | `lalog.captureTerminal` | boolean | `true` | Capture terminal command metadata |
@@ -102,7 +103,7 @@ Data is written to `~/.lalog/`:
 
 ## Privacy
 
-- **Local-first by default.** The extension makes no network calls unless you enable AI.
+- **Local-first by default.** The extension makes no network calls unless you enable AI or opencode chat activity — the only other network path is a read-only poll of an `opencode serve` on `127.0.0.1` (one you already run, or one LaLog starts for you with a random password and stops again when it is no longer needed; a serve LaLog did not start is never signalled).
 - **AI egress is explicit and compact.** Only the session summary — file paths, event counters, git branch, commit subjects — leaves your machine, and only when you run an AI feature.
 - **Redaction built in.** Terminal activity flows through `lalog.redactPatterns` so keys and secrets never land in the log.
 

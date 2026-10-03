@@ -135,7 +135,7 @@ export class SessionStore {
       activeMinutes: 0,
       notes: [],
       needsDescription: false,
-      events: { edits: 0, saves: 0, terminal: 0, fileops: 0, tasks: 0, debug: 0, topFiles: [] },
+      events: { edits: 0, saves: 0, terminal: 0, fileops: 0, tasks: 0, debug: 0, opencode: 0, topFiles: [] },
       activeSpans: [],
       activityTs: [],
     };
@@ -155,6 +155,8 @@ export class SessionStore {
       s.events.tasks += 1;
     } else if (event === 'debug') {
       s.events.debug += 1;
+    } else if (event === 'opencode') {
+      s.events.opencode += 1;
     }
     s.lastActivityAt = now;
   }
@@ -181,10 +183,11 @@ export function normalizeSession(s: Session): Session {
   if (!Array.isArray(s.activityTs)) s.activityTs = [];
   if (!Array.isArray(s.notes)) s.notes = [];
   if (!s.events || !Array.isArray(s.events.topFiles)) {
-    s.events = { edits: 0, saves: 0, terminal: 0, fileops: 0, tasks: 0, debug: 0, topFiles: [] };
+    s.events = { edits: 0, saves: 0, terminal: 0, fileops: 0, tasks: 0, debug: 0, opencode: 0, topFiles: [] };
   }
   if (typeof s.events.fileops !== 'number') s.events.fileops = 0;
   if (typeof s.events.tasks !== 'number') s.events.tasks = 0;
   if (typeof s.events.debug !== 'number') s.events.debug = 0;
+  if (typeof s.events.opencode !== 'number') s.events.opencode = 0;
   return s;
 }

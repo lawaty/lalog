@@ -3,7 +3,7 @@
   "displayName": "LaLog",
   "description": "Local-first work session tracker with automatic event capture, human session descriptions, and optional opencode-powered AI assistance.",
   "icon": "resources/icon.png",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "publisher": "lawaty",
   "license": "MIT",
   "repository": {
@@ -173,6 +173,50 @@
           "type": "boolean",
           "default": true,
           "description": "Send commit subjects (never diffs or bodies) to the AI. File paths and edit/save counters are always sent; file contents and terminal output are never sent."
+        },
+        "lalog.opencode.activity.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Count an open opencode chat in this workspace as activity. OFF by default and independent of lalog.ai.enabled. LaLog reuses a local `opencode serve` you already run; if none is running and lalog.opencode.activity.manageServe is on, it starts one of its own on loopback, password-protected, and stops it again. It only reads session metadata (never message content) and never sends prompts."
+        },
+        "lalog.opencode.activity.manageServe": {
+          "type": "boolean",
+          "default": true,
+          "description": "Let LaLog manage an opencode serve: observe a server already running for this workspace if there is one, otherwise start its own (loopback only, random password) and stop that one — and only that one — when nothing is being tracked. Turn OFF to observe the configured URL only, never starting or stopping anything."
+        },
+        "lalog.opencode.activity.url": {
+          "type": "string",
+          "default": "http://127.0.0.1:4096",
+          "description": "Base URL of the local `opencode serve` instance to poll. Used only when lalog.opencode.activity.manageServe is off; include the port explicitly — pass the same --port you started the server with."
+        },
+        "lalog.opencode.activity.pollIntervalSec": {
+          "type": "number",
+          "default": 30,
+          "description": "Seconds between activity polls of the opencode server while chat activity is being seen. Each poll asks only for the sessions LaLog already tracks (GET /session/{id}), never the full list. Minimum 5s; scaled down by lalog.debugTimeScale and capped so a poll can never outlast idle confirmation. Quiet periods back off automatically (doubling up to five minutes) and reset the moment a session moves."
+        },
+        "lalog.opencode.activity.discoverySec": {
+          "type": "number",
+          "default": 180,
+          "description": "Seconds between discovery polls — how often LaLog re-lists your opencode sessions to notice a brand-new chat, which is the only way one can be found. A list is the expensive request (~68 KB and ~164-283 ms of the server's CPU, versus ~540 B and ~48 ms for a single session), so it runs only here. A chat you just started is therefore noticed within this window. Scaled down by lalog.debugTimeScale and capped at half of lalog.idleConfirmAfterMinutes. Raise it to lower the load further, lower it to notice a new chat sooner."
+        },
+        "lalog.opencode.activity.spawnPort": {
+          "type": "number",
+          "default": 0,
+          "description": "Port for the opencode serve LaLog starts. 0 (default) lets opencode choose a free port and LaLog reads it from the server's own startup line, so it never collides with your own serve."
+        },
+        "lalog.opencode.activity.opencodePath": {
+          "type": "string",
+          "default": "opencode",
+          "description": "Path to the opencode CLI binary used to start the server. Resolved from PATH if left as 'opencode'."
+        },
+        "lalog.opencode.activity.authUser": {
+          "type": "string",
+          "default": "opencode",
+          "description": "HTTP Basic username for the opencode server. Used for a serve LaLog starts (alongside its generated password) and for a server you run yourself when lalog.opencode.activity.authPassword is set."
+        },
+        "lalog.opencode.activity.authPassword": {
+          "type": "string",
+          "description": "HTTP Basic password (the server's OPENCODE_SERVER_PASSWORD) for a server you run yourself. Leave unset: LaLog then generates a random password for the serve it starts, and sends no Authorization header to a server it merely observes. Set to an empty string to deliberately run the serve LaLog starts unsecured."
         }
       }
     },

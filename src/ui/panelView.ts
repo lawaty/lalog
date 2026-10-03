@@ -68,6 +68,7 @@ interface SessionSummary {
     fileops: number;
     tasks: number;
     debug: number;
+    opencode: number;
     topFiles: { path: string; edits: number }[];
   };
   notes: { at: number; text: string }[];
@@ -102,7 +103,7 @@ function summarize(s: Session, idleGapMs: number, projects: Project[]): SessionS
     lastActivityAt: s.lastActivityAt,
     gitBranch: s.gitBranch ?? null,
     commits: (s.commits ?? []).map((c) => c.subject),
-    events: s.events ?? { edits: 0, saves: 0, terminal: 0, fileops: 0, tasks: 0, debug: 0 },
+    events: s.events ?? { edits: 0, saves: 0, terminal: 0, fileops: 0, tasks: 0, debug: 0, opencode: 0 },
     notes: (s.notes ?? []).map((n) => ({ at: n.at, text: n.text })),
     split: { totalMs: split.totalMs, vscodeMs: split.vscodeMs, outsideMs: split.outsideMs },
   };

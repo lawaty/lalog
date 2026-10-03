@@ -119,7 +119,7 @@ test('US-4.4 · session detail renders every section', () => {
     'updates sorted oldest first'
   );
   assert.ok(
-    md.includes('edits 12 · saves 3 · terminal 2 · file ops 1 · tasks 1 · debug 1'),
+    md.includes('edits 12 · saves 3 · terminal 2 · file ops 1 · tasks 1 · debug 1 · opencode 0'),
     'event counters'
   );
   assert.ok(md.includes('- 09:00–09:10 in VS Code'), 'span ending at an activity ts');

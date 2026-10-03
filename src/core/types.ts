@@ -64,6 +64,8 @@ export interface Session {
     fileops: number;
     tasks: number;
     debug: number;
+    /** Activity observed from an opencode chat in this workspace (US-7.2). */
+    opencode: number;
     topFiles: FileTouch[]; // top 10, by edit count
   };
   gitBranch?: string;
@@ -77,7 +79,24 @@ export interface Session {
   activityTs: number[];
 }
 
-export type TrackedEvent = 'edit' | 'save' | 'terminal' | 'fileop' | 'editor' | 'debug' | 'task';
+export type TrackedEvent =
+  | 'edit'
+  | 'save'
+  | 'terminal'
+  | 'fileop'
+  | 'editor'
+  | 'debug'
+  | 'task'
+  | 'opencode';
+
+/**
+ * An activity source LaLog does not own, injected by the composition root
+ * (`src/extension.ts`) so `core/` never imports `src/opencode/` (ADR-011).
+ */
+export interface ServeActivityWatcher {
+  start(): void;
+  dispose(): void;
+}
 
 /** Unified diff captured at save time. */
 export interface TechnicalDiff {

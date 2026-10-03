@@ -7,7 +7,7 @@ import { SessionManager } from '../../src/core/sessionManager';
 import { SessionStore } from '../../src/storage/sessionStore';
 import { TechnicalStore } from '../../src/storage/technicalStore';
 import { buildPaths, ensureDirs, LaLogPaths, workspaceKey } from '../../src/storage/store';
-import { thresholdsMs, LaLogConfig, ThresholdsMs, AiConfig } from '../../src/core/config';
+import { thresholdsMs, LaLogConfig, ThresholdsMs, AiConfig, OpencodeActivityConfig } from '../../src/core/config';
 import { LaLogPanelProvider } from '../../src/ui/panelView';
 import { ProjectRegistry } from '../../src/storage/projectRegistry';
 import { mockVscode } from './mockVscode';
@@ -247,6 +247,7 @@ export async function activateExtension(
   opts: {
     config?: Partial<LaLogConfig>;
     ai?: Partial<AiConfig>;
+    activity?: Partial<OpencodeActivityConfig>;
     /** Pre-existing data dir (for pre-seeded projects.json / sessions.jsonl). */
     dir?: string;
     /** Workspace folder to report; defaults to `<dir>/workspace`. */
@@ -268,6 +269,9 @@ export async function activateExtension(
     sendCommitSubjects: true,
     ...opts.ai,
   });
+  // `lalog.opencode.activity` is its own namespace: only set the keys a test
+  // cares about, so the reader's own defaults apply for everything else.
+  if (opts.activity) mockVscode.setConfig('lalog.opencode.activity', { ...opts.activity });
   const wsPath = opts.wsPath ?? path.join(dir, 'workspace');
   fs.mkdirSync(wsPath, { recursive: true });
   mockVscode.setWorkspaceFolders([wsPath], { name: opts.vscWorkspaceName });
@@ -286,6 +290,7 @@ export async function setupExtension(
   opts: {
     config?: Partial<LaLogConfig>;
     ai?: Partial<AiConfig>;
+    activity?: Partial<OpencodeActivityConfig>;
     dir?: string;
     wsPath?: string;
     vscWorkspaceName?: string;

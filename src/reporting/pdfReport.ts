@@ -345,6 +345,7 @@ function eventCounters(s: Session): string {
   push(s.events?.fileops, 'fileop');
   push(s.events?.tasks, 'task');
   push(s.events?.debug, 'debug');
+  push(s.events?.opencode, 'opencode');
   return parts.length ? parts.join(' · ') : 'no events recorded';
 }
 

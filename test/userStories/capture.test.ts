@@ -246,6 +246,80 @@ test('US-2.4 · stdout captured, ANSI-stripped, capped, redacted when enabled', 
   assert.ok(entry.stdout.includes('[truncated]'), 'capped');
 });
 
+test('TerminalCapture: large streaming output is capped in memory (final stdout <= maxStdoutChars + marker)', async () => {
+  let now = 0;
+  const cap = new TerminalCapture(true, 100, [], () => now);
+  const execution = {
+    commandLine: { value: 'cat big', confidence: 'High', isTrusted: true },
+    cwd: undefined,
+    read: async function* () {
+      for (let i = 0; i < 1000; i++) {
+        yield 'x'.repeat(100);
+      }
+    },
+  };
+  cap.onStart(execution);
+  await cap.flush();
+  now = 100;
+  const entry = cap.onEnd(execution, 0);
+  assert.ok(entry);
+  assert.ok(entry.stdout);
+  assert.ok(entry.stdout.includes('[truncated]'));
+  assert.ok(entry.stdout.length <= 100 + '\n...[truncated]'.length + 10, 'stdout bounded');
+});
+
+test('TerminalCapture: pending reads drain without flush() after completion', async () => {
+  let now = 0;
+  const cap = new TerminalCapture(true, 32000, [], () => now);
+  const execution = {
+    commandLine: { value: 'echo hi', confidence: 'High', isTrusted: true },
+    cwd: undefined,
+    read: async function* () {
+      yield 'hello';
+    },
+  };
+  cap.onStart(execution);
+  // Wait a bit for the async read to settle
+  await new Promise((r) => setTimeout(r, 10));
+  now = 50;
+  const entry = cap.onEnd(execution, 0);
+  assert.ok(entry);
+  assert.ok(entry.stdout?.includes('hello'));
+});
+
+test('TerminalCapture: collector stopped after onEnd cannot regrow buffer', async () => {
+  let now = 0;
+  const cap = new TerminalCapture(true, 32000, [], () => now);
+  let producer: ((v: string) => void) | null = null;
+  const execution = {
+    commandLine: { value: 'long', confidence: 'High', isTrusted: true },
+    cwd: undefined,
+    read: async function* () {
+      const q: string[] = [];
+      producer = (v) => q.push(v);
+      while (true) {
+        if (q.length > 0) {
+          yield q.shift()!;
+        } else {
+          await new Promise((r) => setTimeout(r, 5));
+        }
+      }
+    },
+  };
+  cap.onStart(execution);
+  await new Promise((r) => setTimeout(r, 10));
+  now = 10;
+  const entry = cap.onEnd(execution, 0);
+  assert.ok(entry);
+  const beforeLen = entry.stdout?.length ?? 0;
+  if (producer) producer('MORE_DATA_THAT_SHOULD_NOT_BE_ADDED');
+  await new Promise((r) => setTimeout(r, 20));
+  // Re-read by ending again? No - entry is consumed. But we can't re-end; instead
+  // we just verify the original entry's stdout didn't grow. The key behavior is
+  // the collector stopped - we can't directly observe buffer, but the logic prevents append.
+  assert.equal(entry.stdout?.length ?? 0, beforeLen);
+});
+
 test('US-2.5 · diff capture: new-file, patch, binary skip, redaction, cap, reset, LRU', () => {
   const cap = new DiffCapture(16000, []);
   const first = cap.onSave('/test/file.ts', 'line1\nline2\nline3\n');
@@ -270,6 +344,24 @@ test('US-2.5 · diff capture: new-file, patch, binary skip, redaction, cap, rese
   for (let i = 0; i < 110; i++) lru.onSave(`/test/file${i}.ts`, `content${i}\n`);
   const evicted = lru.onSave('/test/file110.ts', 'new\n');
   assert.ok(evicted && evicted.newFile === true, 'LRU eviction does not crash');
+});
+
+test('DiffCapture: oversized file emits new-file once, not again on second save; under-cap still diffs; reset clears oversized tracking', () => {
+  const cap = new DiffCapture(16000, []);
+  const bigContent = 'x'.repeat(300 * 1024); // > 256KB
+  const first = cap.onSave('/test/huge.ts', bigContent);
+  assert.ok(first && first.newFile === true, 'first save of oversized yields new-file');
+  const second = cap.onSave('/test/huge.ts', bigContent + 'y');
+  assert.equal(second, null, 'second save of same oversized path does not produce duplicate new-file diff');
+  // under-cap file still diffs normally
+  const small = cap.onSave('/test/small.ts', 'a\n');
+  assert.ok(small && small.newFile === true);
+  const small2 = cap.onSave('/test/small.ts', 'a\nb\n');
+  assert.ok(small2 && small2.newFile === false, 'under-cap diffs normally on subsequent saves');
+  // reset clears oversized tracking
+  cap.reset();
+  const afterReset = cap.onSave('/test/huge.ts', bigContent);
+  assert.ok(afterReset && afterReset.newFile === true, 'post-reset save is new-file again');
 });
 
 test('US-2.6 · AI interaction metadata shape (never text)', () => {

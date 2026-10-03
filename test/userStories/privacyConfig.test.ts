@@ -21,7 +21,26 @@ function walk(dir: string): string[] {
   return out;
 }
 
-test('US-8.1 · all data stays under the data dir; no network code in src', async (t) => {
+function srcText(except: string[] = []): string {
+  return walk('src')
+    .filter((f) => !except.some((x) => f.replace(/\\/g, '/').includes(x)))
+    .map((f) => fs.readFileSync(f, 'utf8'))
+    .join('\n');
+}
+
+/**
+ * The sanctioned network calls in src (US-7.2 / ADR-032 → ADR-033):
+ * src/opencode/serveWatcher.ts does a read-only poll of a localhost `opencode
+ * serve`, and src/opencode/serveProcess.ts is the lifecycle half — the same
+ * localhost `fetch` when verifying a server, plus a loopback-only spawn of a
+ * serve LaLog owns. Opt-in, off by default, and neither ever reads message
+ * content or sends a prompt.
+ */
+const SERVE_WATCHER = 'opencode/serveWatcher.ts';
+const SERVE_PROCESS = 'opencode/serveProcess.ts';
+const OPENCODE_FILES = [SERVE_WATCHER, SERVE_PROCESS];
+
+test('US-8.1 · all data stays under the data dir; no network code outside the opencode serve modules', async (t) => {
   const h = setupHarness(t);
   await h.start();
   await h.edit();
@@ -29,11 +48,33 @@ test('US-8.1 · all data stays under the data dir; no network code in src', asyn
   assert.ok(fs.existsSync(path.join(h.dir, 'sessions.jsonl')));
   assert.ok(fs.existsSync(path.join(h.dir, 'active')));
   assert.ok(fs.existsSync(path.join(h.dir, 'technical')));
-  const src = walk('src').map((f) => fs.readFileSync(f, 'utf8')).join('\n');
-  assert.ok(!/fetch\s*\(/.test(src), 'no fetch()');
-  assert.ok(!/\brequire\s*\(\s*['"](?:http|https|net|dgram|tls)['"]\s*\)/.test(src), 'no network modules');
-  assert.ok(!/\bfrom\s+['"](?:http|https|net|dgram|tls)['"]/.test(src), 'no network imports');
-  assert.ok(!/axios|node-fetch|undici/.test(src), 'no http client libs');
+  const all = srcText();
+  assert.ok(!/fetch\s*\(/.test(srcText(OPENCODE_FILES)), 'no fetch() outside the opencode serve modules');
+  assert.ok(!/\brequire\s*\(\s*['"](?:http|https|net|dgram|tls)['"]\s*\)/.test(all), 'no network modules');
+  assert.ok(!/\bfrom\s+['"](?:http|https|net|dgram|tls)['"]/.test(all), 'no network imports');
+  assert.ok(!/axios|node-fetch|undici/.test(all), 'no http client libs');
+  // A serve LaLog starts is loopback-only and never leaves the machine.
+  assert.ok(!/0\.0\.0\.0/.test(all), 'no routable bind anywhere in src');
+  // The carve-out stays narrow and local: opt-in, off by default, localhost only.
+  const props = JSON.parse(fs.readFileSync('package.json', 'utf8')).contributes.configuration
+    .properties as Record<string, { default?: unknown }>;
+  assert.equal(props['lalog.opencode.activity.enabled'].default, false, 'opt-in, off by default');
+  assert.match(
+    String(props['lalog.opencode.activity.url'].default),
+    /^http:\/\/127\.0\.0\.1:\d+$/,
+    'the polled URL is localhost by default'
+  );
+  assert.equal(
+    props['lalog.opencode.activity.authPassword'].default,
+    undefined,
+    'no stored credential: unset makes LaLog generate a random password per serve'
+  );
+  assert.equal(
+    props['lalog.opencode.activity.authPassword'].type,
+    'string',
+    'an explicit empty string remains the unsecured opt-out'
+  );
+  assert.equal(props['lalog.opencode.activity.spawnPort'].default, 0, 'opencode picks the port');
 });
 
 test('US-8.2 · dataDir is respected (tilde expands to home)', () => {

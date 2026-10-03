@@ -54,7 +54,7 @@ The current implementation (v0.1.0) includes:
 
 **Status**: Explicitly excluded.
 
-**Rationale**: LaLog is 100% local. No cloud sync, no server, no auth.
+**Rationale**: LaLog is 100% local. No cloud sync, no server of its own, no auth. (The opt-in opencode activity feature only talks to a localhost `opencode serve` on `127.0.0.1` — one LaLog reuses if it finds, otherwise one it starts and later stops itself. LaLog still runs no server of its own.)
 
 **Alternative**: Users can point `lalog.dataDir` at a synced folder (e.g., Dropbox, Syncthing) for cross-machine sync. This is the user's responsibility, not the extension's.
 
@@ -75,7 +75,7 @@ The current implementation (v0.1.0) includes:
 
 **Still explicitly excluded** (even with AI on):
 - **Proactive live suggestions** — an assistant that watches you and interjects while you work. This remains a rejected/experimental idea: interruption fatigue, latency, and a surveillance feel that is on-brand-wrong for a privacy-first tracker. If ever built, it would be a separate opt-in with long cooldowns and status-bar-only delivery.
-- **Managed `opencode serve` lifecycle / interactive Q&A** — deferred; the current integration is one-shot CLI only.
+- **Interactive Q&A through `opencode serve` / proactive live suggestions** — still excluded. LaLog reuses or starts a serve only to read session metadata (ADR-033): it never sends a prompt, never restarts or reconfigures a serve it did not start, and stops only the ones it did start. Reading a session *list* is not the same as talking to it, and talking to it stays out.
 - **AI replacing human descriptions** — never.
 
 ### Pomodoro / Time Boxing

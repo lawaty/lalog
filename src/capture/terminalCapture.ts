@@ -15,7 +15,10 @@ interface InFlightExecution {
   confidence: 'low' | 'medium' | 'high';
   cwd: string | undefined;
   stdoutChunks: string[];
+  capturedChars: number;
   reading: boolean;
+  truncated: boolean;
+  ended: boolean;
 }
 
 /**
@@ -66,7 +69,10 @@ export class TerminalCapture {
       confidence,
       cwd: execution.cwd?.fsPath,
       stdoutChunks: [],
+      capturedChars: 0,
       reading: false,
+      truncated: false,
+      ended: false,
     };
 
     // Store keyed by the execution object identity
@@ -75,7 +81,14 @@ export class TerminalCapture {
     if (this.captureStdout) {
       entry.reading = true;
       // Fire-and-forget: call read() synchronously in the handler to not miss data
-      this.pendingReads.push(this.collectStdout(execution, entry));
+      const p = this.collectStdout(execution, entry);
+      this.pendingReads.push(p);
+      p.finally(() => {
+        const idx = this.pendingReads.indexOf(p);
+        if (idx !== -1) {
+          this.pendingReads.splice(idx, 1);
+        }
+      });
     }
   }
 
@@ -90,15 +103,16 @@ export class TerminalCapture {
     const entry = this.inFlight.get(execution);
     if (!entry) return null;
     this.inFlight.delete(execution);
+    entry.ended = true;
 
     const durationMs = this.now() - entry.startTs;
 
     let stdout: string | undefined;
-    if (this.captureStdout && entry.stdoutChunks.length > 0) {
+    if (this.captureStdout && (entry.stdoutChunks.length > 0 || entry.truncated)) {
       let raw = entry.stdoutChunks.join('');
       raw = stripAnsi(raw);
       raw = redactText(raw, this.redactPatterns);
-      if (raw.length > this.maxStdoutChars) {
+      if (raw.length > this.maxStdoutChars || entry.truncated) {
         raw = raw.slice(0, this.maxStdoutChars) + '\n...[truncated]';
       }
       stdout = raw;
@@ -142,7 +156,18 @@ export class TerminalCapture {
   ): Promise<void> {
     try {
       for await (const chunk of execution.read()) {
+        if (entry.ended) {
+          // Stop collecting once onEnd has consumed the entry
+          break;
+        }
         entry.stdoutChunks.push(chunk);
+        // Cap incrementally
+        entry.capturedChars += chunk.length;
+        if (entry.capturedChars > this.maxStdoutChars) {
+          entry.truncated = true;
+          // Stop retaining further chunks to bound memory
+          break;
+        }
       }
     } catch {
       // Best-effort: read() may fail if terminal is killed

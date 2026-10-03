@@ -202,8 +202,8 @@ function summaryLine(s: Session, project: Project | null): string {
 }
 
 function countersLine(s: Session): string {
-  const e = s.events ?? { edits: 0, saves: 0, terminal: 0, fileops: 0, tasks: 0, debug: 0 };
-  return `edits ${e.edits ?? 0} · saves ${e.saves ?? 0} · terminal ${e.terminal ?? 0} · file ops ${e.fileops ?? 0} · tasks ${e.tasks ?? 0} · debug ${e.debug ?? 0}`;
+  const e = s.events ?? { edits: 0, saves: 0, terminal: 0, fileops: 0, tasks: 0, debug: 0, opencode: 0 };
+  return `edits ${e.edits ?? 0} · saves ${e.saves ?? 0} · terminal ${e.terminal ?? 0} · file ops ${e.fileops ?? 0} · tasks ${e.tasks ?? 0} · debug ${e.debug ?? 0} · opencode ${e.opencode ?? 0}`;
 }
 
 function elide(body: string): string {

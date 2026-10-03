@@ -98,6 +98,7 @@ When `lalog.captureDiffs` is enabled (default: true), a unified diff is generate
 - **Identical saves** produce no entry
 - Diffs are redacted against `lalog.redactPatterns` and capped at `lalog.maxDiffChars` (16,000 chars)
 - At most 100 files are tracked simultaneously (LRU eviction of oldest)
+- At most 256KB of content is cached per path. Above that, the path's first save still produces a new-file diff but no baseline is cached, so its later saves produce no entry until it drops back under the cap
 
 #### AI Interaction Logging
 
@@ -220,7 +221,7 @@ Each note stores `{ at: <epoch ms>, text }`. Skipping a progress prompt (Esc) re
 Closed sessions are appended to `~/.lalog/sessions.jsonl`:
 
 ```jsonl
-{"id":"20260903-2200-a1b2-c3d4","workspaceKey":"abc1234567","workspaceName":"my-project","startedAt":1725397200000,"endedAt":1725404400000,"lastActivityAt":1725404400000,"activeMinutes":5700000,"activeSpans":[{"start":1725397200000,"end":1725400800000}],"activityTs":[1725397200000,1725397800000,1725400200000,1725400800000],"type":"feature","description":"Fix login bug","notes":[{"at":1725400800000,"text":"wired up the fix"}],"needsDescription":false,"events":{"edits":142,"saves":23,"terminal":8,"fileops":11,"tasks":3,"debug":2,"topFiles":[...]},"gitBranch":"fix/login","commits":[{"hash":"a1b2c3d","subject":"Fix login validation"}],"closedReason":"user"}
+{"id":"20260903-2200-a1b2-c3d4","workspaceKey":"abc1234567","workspaceName":"my-project","startedAt":1725397200000,"endedAt":1725404400000,"lastActivityAt":1725404400000,"activeMinutes":5700000,"activeSpans":[{"start":1725397200000,"end":1725400800000}],"activityTs":[1725397200000,1725397800000,1725400200000,1725400800000],"type":"feature","description":"Fix login bug","notes":[{"at":1725400800000,"text":"wired up the fix"}],"needsDescription":false,"events":{"edits":142,"saves":23,"terminal":8,"fileops":11,"tasks":3,"debug":2,"opencode":0,"topFiles":[...]},"gitBranch":"fix/login","commits":[{"hash":"a1b2c3d","subject":"Fix login validation"}],"closedReason":"user"}
 ```
 
 - **Append-only** — no read-modify-write for normal operation
@@ -509,6 +510,34 @@ The `lalog.exportFilesByDay` command generates a legacy export format compatible
 - Grouped by project slug (top-level directory name)
 - Output: `~/.lalog/exports/<slug>/files_by_day.txt`
 
+### Opencode Chat Activity (opt-in)
+
+Off by default and independent of `lalog.ai.enabled` — a chat keeps a session alive with AI off (US-7.2, ADR-032/ADR-033). When enabled, LaLog tracks your open opencode chats by reading **session metadata** from a local `opencode serve` — the read-only endpoint, which mutates nothing on the server.
+
+**It polls in two tiers, because that is where the cost is.** Listing every session costs the server ~164-283 ms of CPU and ~68 KB (it serializes all 100 sessions, summaries and costs included, and there is no ETag to turn it into a 304); asking for a single session costs ~48 ms and ~540 B. So:
+
+- **Activity poll — frequent and cheap.** Every `lalog.opencode.activity.pollIntervalSec` (default **30 s**) LaLog fetches `GET /session/{id}` for each session it already tracks and compares `time.updated`. A session whose `time.updated` is already older than one discovery window is skipped outright — an old chat cannot meaningfully move — which normally leaves this tier at one or two small requests. A tracked session that answers `404` is forgotten. Requests within a tick are strictly sequential, never a parallel fan-out.
+- **Discovery poll — rare and full.** Only every `lalog.opencode.activity.discoverySec` (default **180 s**, clamped to half of `lalog.idleConfirmAfterMinutes`), and once at start, LaLog lists `GET /session` — the only way to notice a **brand-new** chat, so this setting is the real detection latency for one. A newly seen session is adopted as a baseline and emits nothing until it moves.
+
+Both tiers run *nothing* when no LaLog session is open.
+
+**You do not have to start it.** With `manageServe` on (the default), the watcher looks for a serve already serving this workspace and reuses it; only if there is none does it start one for you, in the workspace root, on `127.0.0.1`, with a random password, and stop it again when it is no longer needed (ADR-033).
+
+It emits **at most one `opencode` activity event per poll**, and only when a session it has *already observed*, whose `directory` is inside the current workspace, has a newer `time.updated`. It counts like any other activity: idle confirmation, accrual and the stale cutoff behave exactly as they do for terminal work, and the new `opencode` counter shows up in session detail, reports and the panel.
+
+- **Reuse first** — a serve you already run is found and adopted, never restarted or reconfigured
+- **Only what LaLog started is ever stopped** — a serve it did not start cannot be signalled at all
+- **Nothing runs when nothing is being tracked** — with no open session the watcher keeps no timer and sends no requests
+- **Small requests, often; the expensive list, rarely** — the 30 s cadence asks for the sessions it tracks, and the full list only every `discoverySec`
+- **Polling adapts** — at the fast cadence while sessions are alive, backing off up to ~5 min when quiet, and snapping back the moment something moves
+- **First sight is a baseline, never an event** — a session appearing on a poll is remembered and emits nothing
+- **Failures retry silently** — after an outage or a failed start the watcher re-baselines (with a fresh list) and retries quietly, so time is never counted for a period it did not observe
+- **LaLog's own runs are ignored** — sessions titled `LaLog …` are its one-shot AI bridge, not your work
+
+**Privacy contract**: loopback only (`127.0.0.1`), metadata only (`id`, `directory`, `title`, `time.updated` — never message content), off by default, never prompts. LaLog starts no server of its own, opens no ports, and stores no credentials; a serve it starts gets a random password kept in memory, and `authUser`/`authPassword` stay in VS Code settings, sent as HTTP Basic only when a password is set.
+
+Settings: `lalog.opencode.activity.enabled`, `.manageServe`, `.url`, `.pollIntervalSec`, `.discoverySec`, `.authUser`, `.authPassword`, `.spawnPort`, `.opencodePath` — see [Configuration](#configuration).
+
 ---
 
 ## Configuration
@@ -536,6 +565,15 @@ All settings are under `lalog.*` in VS Code settings (`settings.json`).
 | `lalog.captureAiLog` | boolean | `true` | Log AI interaction metadata (char counts, latency — never prompt/response text) |
 | `lalog.maxDiffChars` | number | `16000` | Maximum characters per diff entry before truncation |
 | `lalog.maxStdoutChars` | number | `32000` | Maximum characters per terminal stdout capture before truncation |
+| `lalog.opencode.activity.enabled` | boolean | `false` | Count an open opencode chat in this workspace as activity. Independent of `lalog.ai.enabled` |
+| `lalog.opencode.activity.manageServe` | boolean | `true` | Reuse a running `opencode serve` for this workspace, and start one if there is none. `false` = read-only: poll `.url` and touch no process |
+| `lalog.opencode.activity.url` | string | `http://127.0.0.1:4096` | Base URL of the local `opencode serve` to poll. Used as-is when `manageServe` is off, and as the fallback endpoint otherwise |
+| `lalog.opencode.activity.pollIntervalSec` | number | `30` | Seconds between activity polls while sessions are alive. Each poll fetches only the sessions LaLog already tracks (`GET /session/{id}`), never the full list. Divided by `lalog.debugTimeScale`, floor 5s, capped at `lalog.idleConfirmAfterMinutes`/3; it doubles per quiet poll up to ~5 min |
+| `lalog.opencode.activity.discoverySec` | number | `180` | Seconds between full session lists (`GET /session`) — how often a brand-new chat is noticed, since that is the only way one can be found. Divided by `lalog.debugTimeScale`, capped at `lalog.idleConfirmAfterMinutes`/2 |
+| `lalog.opencode.activity.authUser` | string | `opencode` | HTTP Basic username for the opencode server; only used when a password is set |
+| `lalog.opencode.activity.authPassword` | string | *(unset)* | Password for a serve LaLog starts. **Unset** ⇒ LaLog generates a random one (never stored). **Explicit `""`** ⇒ deliberately run that serve unsecured. A value is used verbatim, and is sent to a server you run yourself. |
+| `lalog.opencode.activity.spawnPort` | number | `0` | Port for a serve LaLog starts; `0` lets opencode pick a free one |
+| `lalog.opencode.activity.opencodePath` | string | `opencode` | Path to the opencode binary, for managed installs or wrappers |
 
 ### Threshold Resolution
 
