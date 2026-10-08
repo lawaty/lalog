@@ -271,38 +271,70 @@ auto-update to ever work.
 
 **Microsoft Marketplace** (only needed for `vsce`):
 1. Sign in at <https://marketplace.visualstudio.com> and create a publisher whose id
-   matches `publisher` in `package.json` (currently `lawaty`). The id must match exactly.
+   matches `publisher` in `package.json` (currently `Lawaty`). The id must match exactly,
+   and it is immutable — the first publish fixes the extension ID forever.
 2. Generate an Azure DevOps PAT with **All accessible organizations** and the
    **Manage Extensions** scope.
-3. Store it as the `VSCE_PAT` repository secret.
+3. Store it as the `VSCE_PAT` repository secret (or export it locally).
 
 **Open VSX** (only needed for `ovsx`): store an Open VSX personal access token as the
-`OVSX_PAT` repository secret.
+`OVSX_PAT` repository secret (or export it locally).
 
-### Release
+### Release — local path (works with no CI)
+
+This is the primary path. It needs no GitHub Actions runner, so it is unaffected by
+account-level Actions locks:
+
+```bash
+npm version <patch|minor|major>      # bumps package.json + package-lock.json
+npm run typecheck && npm test         # gate: don't publish a red build
+git commit -am "..." && git push origin main --follow-tags
+VSCE_PAT=<token> npm run publish:vsce # Microsoft Marketplace
+OVSX_PAT=<token> npm run publish:ovsx # Open VSX
+```
+
+Each registry is published independently and **skips** if its token is unset, so a
+missing `VSCE_PAT` degrades to "Open VSX only" rather than failing the release.
+Version numbers are per-registry: 0.7.4 can be on Open VSX while absent from Microsoft
+Marketplace without conflict.
+
+Two things to know when verifying a publish:
+
+- **A version must be new to each registry.** Re-running `publish:ovsx` for a version
+  that already exists fails with *version already exists*.
+- **Open VSX indexing lags the publish.** `/api/<ns>/<name>/versions` is served from the
+  search index and can trail by minutes, making a successful publish look like a failure.
+  Check `/api/<ns>/<name>/<version>` instead — it reads the entity directly.
+
+### Release — CI path
 
 Both workflows fire on a `v*` tag push, so a tag is the single release action:
 
 ```bash
-npm version <patch|minor|major>   # bumps package.json + package-lock.json
+npm version <patch|minor|major>
 git commit -am "..."
 git tag -a "v<version>" -m "<version>"
 git push origin main --follow-tags   # the tag triggers both publish workflows
 ```
 
-> **This step is not optional.** Both `publish-vscm.yml` and `publish-ovsx.yml` trigger
-> on tag pushes only. A commit on `main` without a matching tag publishes nothing, and
-> the version bump on `main` does not reach either registry.
+> **This step is not optional for CI.** Both `publish-vscm.yml` and `publish-ovsx.yml`
+> trigger on tag pushes only, so a commit on `main` without a matching tag publishes
+> nothing. Without CI, `npm version` + a local publish is the equivalent.
 
-To publish a version without cutting a tag, run either workflow from the Actions tab
+To publish via CI without cutting a new tag, run either workflow from the Actions tab
 (**Run workflow**) — both accept `workflow_dispatch`.
 
-To publish locally instead (useful when verifying a release before tagging):
+#### If Actions fails with "account is locked due to a billing issue"
 
-```bash
-VSCE_PAT=<token> npm run publish:vsce
-OVSX_PAT=<token> npm run publish:ovsx
-```
+GitHub refuses to schedule *any* runner, with jobs failing in seconds and zero steps
+executed. This is an **account-level** lock, not an Actions quota or cost problem — the
+standard runner is free for public repositories, so a public repo's workflows cost
+nothing and are still blocked. It is typically triggered by a failed subscription charge
+(no money taken, so there may be no visible invoice).
+
+Use the local path above. To clear the lock you would need a working payment method to
+retry the charge, or — with no card available — cancelling the subscription and asking
+GitHub Support to void the never-succeeded charge. Neither is required to ship.
 
 ### Local `.vsix` installs do not auto-update
 

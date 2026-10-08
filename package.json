@@ -325,6 +325,7 @@
     "typecheck": "tsc --noEmit",
     "test": "node esbuild.test.js && node --test \"dist-test/**/*.test.js\"",
     "package": "vsce package",
+    "release": "node release.mjs",
     "publish:vsce": "vsce publish",
     "publish:ovsx": "ovsx publish"
   },

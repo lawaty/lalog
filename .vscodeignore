@@ -15,4 +15,5 @@ docs/**
 tsconfig.json
 esbuild.js
 esbuild.test.js
+release.mjs
 .mocharc.json
