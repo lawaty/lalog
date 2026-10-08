@@ -3,7 +3,7 @@
   "displayName": "LaLog",
   "description": "Local-first work session tracker with automatic event capture, human session descriptions, and optional opencode-powered AI assistance.",
   "icon": "resources/icon.png",
-  "version": "0.7.3",
+  "version": "0.7.4",
   "publisher": "Lawaty",
   "license": "MIT",
   "repository": {
