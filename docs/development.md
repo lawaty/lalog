@@ -244,17 +244,72 @@ This runs `vsce package`, which:
 - Bundles the extension (runs `npm run build` first via `vscode:prepublish`)
 - Creates `lalog-0.1.0.vsix`
 
-**Install the .vsix**:
+**Install the .vsix** (local development only — see the warning below):
 
 ```bash
 code --install-extension lalog-0.1.0.vsix
 ```
 
-**Publish to VS Code Marketplace** (requires publisher account):
+---
+
+## Publishing / Releasing
+
+LaLog publishes to **two independent registries**, because they serve different editors
+and neither can substitute for the other:
+
+| Registry | CLI | Editor support |
+|---|---|---|
+| **VS Code Marketplace** (Microsoft) | `vsce` | Stock VS Code, VSCodium, Cursor |
+| **Open VSX** (Eclipse Foundation) | `ovsx` | VSCodium, Cursor, Windsurf, Trae, Void, Positron, Theia, Che, Gitpod |
+
+Stock Microsoft VS Code queries **only** the Microsoft Marketplace — the gallery URL is
+hard-coded in `resources/app/product.json`. An Open VSX install is invisible to it, which
+is why a marketplace publish of the Microsoft flavour is required for stock-VS-Code
+auto-update to ever work.
+
+### One-time account setup
+
+**Microsoft Marketplace** (only needed for `vsce`):
+1. Sign in at <https://marketplace.visualstudio.com> and create a publisher whose id
+   matches `publisher` in `package.json` (currently `lawaty`). The id must match exactly.
+2. Generate an Azure DevOps PAT with **All accessible organizations** and the
+   **Manage Extensions** scope.
+3. Store it as the `VSCE_PAT` repository secret.
+
+**Open VSX** (only needed for `ovsx`): store an Open VSX personal access token as the
+`OVSX_PAT` repository secret.
+
+### Release
+
+Both workflows fire on a `v*` tag push, so a tag is the single release action:
 
 ```bash
-vsce publish
+npm version <patch|minor|major>   # bumps package.json + package-lock.json
+git commit -am "..."
+git tag -a "v<version>" -m "<version>"
+git push origin main --follow-tags   # the tag triggers both publish workflows
 ```
+
+> **This step is not optional.** Both `publish-vscm.yml` and `publish-ovsx.yml` trigger
+> on tag pushes only. A commit on `main` without a matching tag publishes nothing, and
+> the version bump on `main` does not reach either registry.
+
+To publish a version without cutting a tag, run either workflow from the Actions tab
+(**Run workflow**) — both accept `workflow_dispatch`.
+
+To publish locally instead (useful when verifying a release before tagging):
+
+```bash
+VSCE_PAT=<token> npm run publish:vsce
+OVSX_PAT=<token> npm run publish:ovsx
+```
+
+### Local `.vsix` installs do not auto-update
+
+A `.vsix` installed from a local file carries no registry provenance, so VS Code will
+never update it, never surface an update notification for it, and it will never appear
+in the Extensions view as updatable. This is expected behavior, not a bug. For end users
+always install by extension ID (`code --install-extension Lawaty.lalog`).
 
 ---
 

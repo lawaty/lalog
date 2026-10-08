@@ -1,4 +1,4 @@
-name: Publish to Open VSX
+name: Publish to VS Code Marketplace
 
 on:
   push:
@@ -21,7 +21,7 @@ jobs:
 
       - run: npm run build
 
-      - name: Publish to Open VSX
-        run: npx ovsx publish
+      - name: Publish to VS Code Marketplace
+        run: npx vsce publish --pat "$VSCE_PAT"
         env:
-          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}

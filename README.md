@@ -34,16 +34,66 @@ Clicking a row opens that session as a markdown document — description, in/out
 
 Reports are session-centric markdown — pick a range (today / yesterday / week / month / any custom span) and a project scope, and single-day reports include an hourly log. Nothing is uploaded anywhere unless you opt into AI.
 
-## Quick start
+## Install
+
+LaLog ships to two separate extension registries. They are independent, and which one
+you can use depends on your editor:
+
+| Registry | Extensions panel ID | Works in |
+|---|---|---|
+| **VS Code Marketplace** (Microsoft) | `Lawaty.lalog` | Stock VS Code, VSCodium, Cursor |
+| **Open VSX** (Eclipse Foundation) | `lawaty.lalog` | VSCodium, Cursor, Windsurf, Trae, Void, Positron, Theia, Eclipse Che, Gitpod |
+
+The two IDs differ only in the casing of the publisher, because the publisher is
+registered as `Lawaty` on Microsoft Marketplace and as `lawaty` on Open VSX. Extension
+lookup is case-insensitive, so this never affects installing or updating — but the ID
+you type or see in a log depends on which registry you came from.
+
+**Stock Microsoft VS Code only ever queries the Microsoft Marketplace** — its gallery is
+hard-coded in `product.json`. It cannot see Open VSX, so if you are on a Microsoft build,
+install from the VS Code Marketplace:
+
+1. Open the Extensions view (`Ctrl+Shift+X` / `Cmd+Shift+X`).
+2. Search for **`lalog.lalog`** and click **Install**.
+
+Or from the terminal:
+
+```bash
+code --install-extension Lawaty.lalog
+```
+
+On a VSCodium/Cursor/Windsurf/Trae/Void/Positron build, search `lalog.lalog` in the
+Extensions view — those editors ship with Open VSX as their default gallery.
+
+### Why install from a registry and not a `.vsix`
+
+A `.vsix` installed with `--install-extension ./lalog-x.y.z.vsix` is a **standalone
+artifact**: VS Code records no publisher/registry provenance for it, so it never
+receives marketplace updates, never appears in update notifications, and pins you to
+that exact file forever. Installing by extension ID from a registry is what makes
+auto-update work — every new tag you publish is picked up automatically.
+
+If you previously installed from a `.vsix`, remove that copy once before installing from
+the registry:
+
+```bash
+code --uninstall-extension Lawaty.lalog
+code --install-extension Lawaty.lalog
+```
+
+### Running from source instead
 
 ```bash
 npm install
 npm run build
-npx @vscode/vsce package --no-dependencies --allow-missing-repository
-# install the resulting .vsix (or press F5 in VS Code to run from source)
+# then press F5 in VS Code (Extension Development Host), or package a local .vsix:
+npm run package
 ```
 
-Open a workspace. That's it — LaLog starts a session, tracks events, and occasionally asks you what you're working on (all prompts are optional and skippable).
+## Quick start
+
+Open a workspace. That's it — LaLog starts a session, tracks events, and occasionally
+asks you what you're working on (all prompts are optional and skippable).
 
 Data is written to `~/.lalog/`:
 
