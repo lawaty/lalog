@@ -273,9 +273,18 @@ auto-update to ever work.
 1. Sign in at <https://marketplace.visualstudio.com> and create a publisher whose id
    matches `publisher` in `package.json` (currently `Lawaty`). The id must match exactly,
    and it is immutable — the first publish fixes the extension ID forever.
-2. Generate an Azure DevOps PAT with **All accessible organizations** and the
-   **Manage Extensions** scope.
-3. Store it as the `VSCE_PAT` repository secret (or export it locally).
+2. Authenticate — pick either:
+   - **Azure DevOps PAT.** Generate one with **All accessible organizations** and the
+     **Manage Extensions** scope. Set `VSCE_PAT` (as a repository secret for CI, or
+     exported locally). Note a PAT can only be created once the Azure DevOps org's
+     email is verified.
+   - **Microsoft Entra ID.** No secret to create or rotate. `vsce --azure-credential`
+     resolves a token through `@azure/identity`'s chain — `EnvironmentCredential`,
+     `AzureCliCredential`, `ManagedIdentityCredential`, `AzurePowerShellCredential`,
+     `AzureDeveloperCliCredential` — so any of those works. On a workstation that
+     normally means installing the Azure CLI and running `az login` with the same
+     Microsoft account that owns the publisher. Set `VSCE_AZURE_CREDENTIAL=1`.
+   `VSCE_PAT` wins if both are set.
 
 **Open VSX** (only needed for `ovsx`): store an Open VSX personal access token as the
 `OVSX_PAT` repository secret (or export it locally).
@@ -289,12 +298,20 @@ account-level Actions locks:
 npm version <patch|minor|major>      # bumps package.json + package-lock.json
 npm run typecheck && npm test         # gate: don't publish a red build
 git commit -am "..." && git push origin main --follow-tags
-VSCE_PAT=<token> npm run publish:vsce # Microsoft Marketplace
-OVSX_PAT=<token> npm run publish:ovsx # Open VSX
+npm run release                       # or: VSCE_PAT=... OVSX_PAT=... npm run release
 ```
 
-Each registry is published independently and **skips** if its token is unset, so a
-missing `VSCE_PAT` degrades to "Open VSX only" rather than failing the release.
+`npm run release` gates on typecheck + tests, then publishes each registry
+independently, **skipping** any whose credentials are absent and reporting it in the
+summary — so a missing `VSCE_PAT` degrades to "Open VSX only" instead of failing the
+release. A non-zero exit means a publish that was actually attempted failed.
+
+To see what would be published, and with which auth, before committing to it:
+
+```bash
+npm run release:dry
+```
+
 Version numbers are per-registry: 0.7.4 can be on Open VSX while absent from Microsoft
 Marketplace without conflict.
 

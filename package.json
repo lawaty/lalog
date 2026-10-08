@@ -326,6 +326,7 @@
     "test": "node esbuild.test.js && node --test \"dist-test/**/*.test.js\"",
     "package": "vsce package",
     "release": "node release.mjs",
+    "release:dry": "node release.mjs --dry-run",
     "publish:vsce": "vsce publish",
     "publish:ovsx": "ovsx publish"
   },
