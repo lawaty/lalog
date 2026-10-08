@@ -37,7 +37,8 @@ const REGISTRIES = [
     name: 'VS Code Marketplace',
     id: `${pkg.publisher}.${pkg.name}`,
     auth: vsceAuth,
-    unavailable: 'set VSCE_PAT, or set VSCE_AZURE_CREDENTIAL=1 after `az login`',
+    unavailable:
+      'set VSCE_PAT (recommended), or VSCE_AZURE_CREDENTIAL=1 if `az login` gives you an account context',
     args: () => vsceAuth.args,
   },
   {

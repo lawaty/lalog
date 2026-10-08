@@ -281,10 +281,16 @@ auto-update to ever work.
    - **Microsoft Entra ID.** No secret to create or rotate. `vsce --azure-credential`
      resolves a token through `@azure/identity`'s chain — `EnvironmentCredential`,
      `AzureCliCredential`, `ManagedIdentityCredential`, `AzurePowerShellCredential`,
-     `AzureDeveloperCliCredential` — so any of those works. On a workstation that
-     normally means installing the Azure CLI and running `az login` with the same
-     Microsoft account that owns the publisher. Set `VSCE_AZURE_CREDENTIAL=1`.
-   `VSCE_PAT` wins if both are set.
+     `AzureDeveloperCliCredential` — so any of those works.
+     **Caveat:** `AzureCliCredential` shells out to `az account get-access-token`, which
+     needs a default account in `azureProfile.json`. A personal Microsoft account with no
+     Azure subscriptions does not get one from a plain `az login`, and
+     `az login --allow-no-subscriptions --tenant <guid>` currently fails on consumer
+     tenants with `invalid_scope ... management.core.windows.net//.default`. If `az login`
+     leaves you at `Please run 'az login' to setup account`, use the PAT instead. Set
+     `VSCE_AZURE_CREDENTIAL=1` only once `az account show` works.
+   `VSCE_PAT` wins if both are set. **Prefer the PAT** — it is one copy-paste with no
+   moving parts.
 
 **Open VSX** (only needed for `ovsx`): store an Open VSX personal access token as the
 `OVSX_PAT` repository secret (or export it locally).
