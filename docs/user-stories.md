@@ -516,7 +516,7 @@ Acceptance criteria are the observable, testable conditions that make the story 
 - Given several tracked sessions, then one tick issues its requests one at a time — never a parallel fan-out — and never asks for the same session twice in a tick.
 - Given no open LaLog session, then no request of any kind is made, at either tier.
 - Given the same events, then they count like any other activity: idle confirmation, accrual and the stale cutoff all behave exactly as they do for terminal work, so a live chat is never asked about or cut off.
-- Given the setting is off (the default), then nothing is polled and no request is made; the setting is independent of `lalog.ai.enabled` — a chat keeps a session alive with AI off, and turning AI off does not disable it.
+- Given `lalog.opencode.activity.enabled` (on by default), then observation works with no setup at all; given it is set to `false`, then nothing is polled and no request is made. The setting is independent of `lalog.ai.enabled` — a chat keeps a session alive with AI off, and turning AI off does not disable it.
 - Given the server is not running or the poll fails, then LaLog retries silently and re-baselines after an outage, so no time is ever counted for a period it did not observe.
 - Given `lalog.opencode.activity.manageServe` (on by default) and a serve already running for this workspace, then LaLog finds and reuses it instead of starting a second one, and never restarts or reconfigures it.
 - Given `manageServe` and no serve running for this workspace, then LaLog starts one itself — on `127.0.0.1`, in the workspace root, with a random password it never stores — waits until it actually answers, and stops that serve again when it is no longer needed.

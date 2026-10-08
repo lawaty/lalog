@@ -269,9 +269,11 @@ export async function activateExtension(
     sendCommitSubjects: true,
     ...opts.ai,
   });
-  // `lalog.opencode.activity` is its own namespace: only set the keys a test
-  // cares about, so the reader's own defaults apply for everything else.
-  if (opts.activity) mockVscode.setConfig('lalog.opencode.activity', { ...opts.activity });
+  // `lalog.opencode.activity` is its own namespace. The product default is ON, but a
+  // real `activate()` here would then build a live ServeWatcher — global `fetch`, and
+  // `manageServe` spawning a real `opencode serve` in a temp workspace. Tests pin it OFF
+  // unless they opt in; every other key still falls through to the reader's defaults.
+  mockVscode.setConfig('lalog.opencode.activity', { enabled: false, ...opts.activity });
   const wsPath = opts.wsPath ?? path.join(dir, 'workspace');
   fs.mkdirSync(wsPath, { recursive: true });
   mockVscode.setWorkspaceFolders([wsPath], { name: opts.vscWorkspaceName });

@@ -8,7 +8,7 @@ import { LlmBridge, LlmResult } from './types';
  * - OFF when `lalog.ai.enabled` is false: nothing is spawned, nothing is sent.
  * - No server lifecycle, no ports, no auth storage — model auth comes from the
  *   user's own `opencode auth login`.
- * - ADR-032 adds a separate, opt-in observer for an already-running `opencode serve` (activity metadata only); this bridge still has no server lifecycle.
+ * - ADR-032 adds a separate observer for an already-running `opencode serve` (activity metadata only); this bridge still has no server lifecycle.
  *
  * Data policy: only the compact Session summary is sent (paths, counters,
  * branch, optional commit subjects). File diffs and terminal text are captured

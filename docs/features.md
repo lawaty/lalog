@@ -510,9 +510,9 @@ The `lalog.exportFilesByDay` command generates a legacy export format compatible
 - Grouped by project slug (top-level directory name)
 - Output: `~/.lalog/exports/<slug>/files_by_day.txt`
 
-### Opencode Chat Activity (opt-in)
+### Opencode Chat Activity (on by default)
 
-Off by default and independent of `lalog.ai.enabled` — a chat keeps a session alive with AI off (US-7.2, ADR-032/ADR-033). When enabled, LaLog tracks your open opencode chats by reading **session metadata** from a local `opencode serve` — the read-only endpoint, which mutates nothing on the server.
+On by default and independent of `lalog.ai.enabled` — a chat keeps a session alive with AI off (US-7.2, ADR-032/ADR-033 → ADR-034). Turn it off with `"lalog.opencode.activity.enabled": false` for a fully local, zero-request install. When enabled, LaLog tracks your open opencode chats by reading **session metadata** from a local `opencode serve` — the read-only endpoint, which mutates nothing on the server.
 
 **It polls in two tiers, because that is where the cost is.** Listing every session costs the server ~164-283 ms of CPU and ~68 KB (it serializes all 100 sessions, summaries and costs included, and there is no ETag to turn it into a 304); asking for a single session costs ~48 ms and ~540 B. So:
 
@@ -534,7 +534,7 @@ It emits **at most one `opencode` activity event per poll**, and only when a ses
 - **Failures retry silently** — after an outage or a failed start the watcher re-baselines (with a fresh list) and retries quietly, so time is never counted for a period it did not observe
 - **LaLog's own runs are ignored** — sessions titled `LaLog …` are its one-shot AI bridge, not your work
 
-**Privacy contract**: loopback only (`127.0.0.1`), metadata only (`id`, `directory`, `title`, `time.updated` — never message content), off by default, never prompts. LaLog starts no server of its own, opens no ports, and stores no credentials; a serve it starts gets a random password kept in memory, and `authUser`/`authPassword` stay in VS Code settings, sent as HTTP Basic only when a password is set.
+**Privacy contract**: loopback only (`127.0.0.1`), metadata only (`id`, `directory`, `title`, `time.updated` — never message content), never prompts, and one setting turns the whole thing off. LaLog runs no server of its own; with `manageServe` on it reuses a serve you already run, and only starts one on loopback in the workspace root when there is none to reuse — a random password for that serve is kept in memory only, and `authUser`/`authPassword` stay in VS Code settings, sent as HTTP Basic only when a password is set.
 
 Settings: `lalog.opencode.activity.enabled`, `.manageServe`, `.url`, `.pollIntervalSec`, `.discoverySec`, `.authUser`, `.authPassword`, `.spawnPort`, `.opencodePath` — see [Configuration](#configuration).
 
@@ -565,7 +565,7 @@ All settings are under `lalog.*` in VS Code settings (`settings.json`).
 | `lalog.captureAiLog` | boolean | `true` | Log AI interaction metadata (char counts, latency — never prompt/response text) |
 | `lalog.maxDiffChars` | number | `16000` | Maximum characters per diff entry before truncation |
 | `lalog.maxStdoutChars` | number | `32000` | Maximum characters per terminal stdout capture before truncation |
-| `lalog.opencode.activity.enabled` | boolean | `false` | Count an open opencode chat in this workspace as activity. Independent of `lalog.ai.enabled` |
+| `lalog.opencode.activity.enabled` | boolean | `true` | Count an open opencode chat in this workspace as activity. Independent of `lalog.ai.enabled`; set `false` for a fully local, zero-request install |
 | `lalog.opencode.activity.manageServe` | boolean | `true` | Reuse a running `opencode serve` for this workspace, and start one if there is none. `false` = read-only: poll `.url` and touch no process |
 | `lalog.opencode.activity.url` | string | `http://127.0.0.1:4096` | Base URL of the local `opencode serve` to poll. Used as-is when `manageServe` is off, and as the fallback endpoint otherwise |
 | `lalog.opencode.activity.pollIntervalSec` | number | `30` | Seconds between activity polls while sessions are alive. Each poll fetches only the sessions LaLog already tracks (`GET /session/{id}`), never the full list. Divided by `lalog.debugTimeScale`, floor 5s, capped at `lalog.idleConfirmAfterMinutes`/3; it doubles per quiet poll up to ~5 min |

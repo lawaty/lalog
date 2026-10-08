@@ -88,7 +88,7 @@ export function readAiConfig(): AiConfig {
 }
 
 /**
- * Raw `lalog.opencode.activity.*` values. Off by default and independent of
+ * Raw `lalog.opencode.activity.*` values. On by default and independent of
  * `lalog.ai.enabled` (US-7.2): observing an opencode chat must work with AI off.
  */
 export interface OpencodeActivityConfig {
@@ -117,7 +117,7 @@ export interface OpencodeActivityConfig {
 }
 
 const OPENCODE_ACTIVITY_DEFAULTS: OpencodeActivityConfig = {
-  enabled: false,
+  enabled: true,
   manageServe: true,
   url: 'http://127.0.0.1:4096',
   pollIntervalSec: 30,

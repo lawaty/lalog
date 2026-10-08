@@ -59,8 +59,8 @@ test('non-goal · resumeWindowMinutes is absent from config and package.json', (
   assert.ok(!src.includes('resumeWindowMinutes'));
 });
 
-test('non-goal · no cloud/telemetry network code outside the opt-in opencode serve modules', () => {
-  // The carve-out is exactly the two opencode files: the opt-in serve watcher
+test('non-goal · no cloud/telemetry network code outside the opencode serve modules', () => {
+  // The carve-out is exactly the two opencode files: the serve watcher
   // and the lifecycle module that starts/stops a serve LaLog owns. Both speak
   // only to 127.0.0.1. LaLog hosts nothing and talks to nothing else.
   const src = srcFiles(OPENCODE_FILES);
@@ -75,7 +75,7 @@ test('non-goal · no cloud/telemetry network code outside the opt-in opencode se
   assert.ok(!/0\.0\.0\.0/.test(all), 'never a routable bind: loopback only');
   const props = JSON.parse(fs.readFileSync('package.json', 'utf8')).contributes.configuration
     .properties as Record<string, { default?: unknown }>;
-  assert.equal(props['lalog.opencode.activity.enabled'].default, false, 'opt-in, off by default');
+  assert.equal(props['lalog.opencode.activity.enabled'].default, true, 'on by default; one setting turns it off');
   assert.match(
     String(props['lalog.opencode.activity.url'].default),
     /^http:\/\/127\.0\.0\.1:\d+$/,

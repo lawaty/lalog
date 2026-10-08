@@ -78,7 +78,7 @@ interface Session {
     fileops: number;             // File create/delete/rename events
     tasks: number;               // Task execution starts
     debug: number;               // Debug session start/end events
-    opencode: number;            // Opencode chat activity (opt-in watcher, US-7.2); 0 when off
+    opencode: number;            // Opencode chat activity (serve watcher, US-7.2); 0 when off
     topFiles: FileTouch[];       // Top 10 most-edited files
   };
   gitBranch?: string;            // Git branch at session end

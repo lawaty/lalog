@@ -23,7 +23,7 @@
 
 LaLog is built on five principles:
 
-1. **Passive capture, active description** — The extension captures events (edits, saves, terminal, file ops, debug, tasks, and — opt-in — opencode chat activity) automatically. The human only provides descriptions at natural breakpoints.
+1. **Passive capture, active description** — The extension captures events (edits, saves, terminal, file ops, debug, tasks, and opencode chat activity) automatically. The human only provides descriptions at natural breakpoints.
 2. **Sessions are engagement threads** — Not day-bound. An overnight coding session from 22:00 to 02:00 is one session. The only boundary is idle: a session is force-closed after `staleSessionAfterMinutes` (default 60) of no activity and a fresh session starts (the 2h auto-close safety net is capped at that cutoff).
 3. **Never trust interval timers; confirm idle** — Active time is computed from event gaps, not `setInterval`. If you step away for more than 15 minutes, that gap is not counted — unless you confirm "Are you still there?", in which case the idle stretch counts as active but *outside* VS Code (tagless spans classified at report time). Saying "I was away" instead trims that idle stretch and resumes tracking.
 4. **Breakpoint-aligned prompting** — Prompts are held until a natural pause (terminal command ends, debug session terminates, return from idle). No interrupting flow.
@@ -123,7 +123,7 @@ flowchart TB
     SB --> AGG
 ```
 
-`extension.ts` is the composition root: it constructs `opencode/serveWatcher.ts` when `lalog.opencode.activity.enabled` is true and injects it into `SessionManager` as the core-owned `ServeActivityWatcher` interface. `core/` never imports `opencode/` (ADR-011), so serve observation (ADR-032) stays an independent opt-in from the `opencode run` AI bridge. The watcher also receives a `shouldObserve` predicate — `manager.getSession() !== null` — so it keeps no timer and sends no requests while nothing is being tracked, and `wake()` on every session state change so tracking resumes the moment it is needed.
+`extension.ts` is the composition root: it constructs `opencode/serveWatcher.ts` when `lalog.opencode.activity.enabled` is true and injects it into `SessionManager` as the core-owned `ServeActivityWatcher` interface. `core/` never imports `opencode/` (ADR-011), so serve observation (ADR-032 → ADR-034) stays an independent switch from the `opencode run` AI bridge — one is on by default, the other is off. The watcher also receives a `shouldObserve` predicate — `manager.getSession() !== null` — so it keeps no timer and sends no requests while nothing is being tracked, and `wake()` on every session state change so tracking resumes the moment it is needed.
 
 ### Module Responsibilities
 
@@ -188,7 +188,7 @@ flowchart LR
 6. **DescribeFlow / WrapPrompt** presents the UI (InputBox → QuickPick)
 7. **SessionStore** persists to JSONL (closed sessions) or atomic snapshot (active sessions)
 
-The opencode serve watcher (`opencode/serveWatcher.ts`) is one **additional source**, not VS Code: when `lalog.opencode.activity.enabled` is on it reads session metadata on a localhost `opencode serve` — `GET /session/{id}` per tracked session on the fast cadence, the full `GET /session` list only every `discoverySec` — and feeds the same `onActivityEvent` path from step 3, so accrual, idle confirmation and the stale cutoff are shared unchanged. Loopback and metadata only, off by default (ADR-032). With `lalog.opencode.activity.manageServe` on it is also the *client* of `opencode/serveProcess.ts`: reuse a serve already serving this workspace, otherwise start one (loopback, workspace root, random password, port chosen by opencode) and stop only that one again when no session is being tracked (ADR-033). Discovery is best-effort and silent — a miss simply means LaLog starts its own.
+The opencode serve watcher (`opencode/serveWatcher.ts`) is one **additional source**, not VS Code: when `lalog.opencode.activity.enabled` is on it reads session metadata on a localhost `opencode serve` — `GET /session/{id}` per tracked session on the fast cadence, the full `GET /session` list only every `discoverySec` — and feeds the same `onActivityEvent` path from step 3, so accrual, idle confirmation and the stale cutoff are shared unchanged. Loopback and metadata only, on by default with one setting to turn it off (ADR-032 → ADR-034). With `lalog.opencode.activity.manageServe` on it is also the *client* of `opencode/serveProcess.ts`: reuse a serve already serving this workspace, otherwise start one (loopback, workspace root, random password, port chosen by opencode) and stop only that one again when no session is being tracked (ADR-033). Discovery is best-effort and silent — a miss simply means LaLog starts its own.
 
 ---
 

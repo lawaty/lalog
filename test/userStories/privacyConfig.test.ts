@@ -33,8 +33,8 @@ function srcText(except: string[] = []): string {
  * src/opencode/serveWatcher.ts does a read-only poll of a localhost `opencode
  * serve`, and src/opencode/serveProcess.ts is the lifecycle half — the same
  * localhost `fetch` when verifying a server, plus a loopback-only spawn of a
- * serve LaLog owns. Opt-in, off by default, and neither ever reads message
- * content or sends a prompt.
+ * serve LaLog owns. Loopback-only and never off-limits: one setting turns it
+ * off, and neither module ever reads message content or sends a prompt.
  */
 const SERVE_WATCHER = 'opencode/serveWatcher.ts';
 const SERVE_PROCESS = 'opencode/serveProcess.ts';
@@ -55,10 +55,10 @@ test('US-8.1 · all data stays under the data dir; no network code outside the o
   assert.ok(!/axios|node-fetch|undici/.test(all), 'no http client libs');
   // A serve LaLog starts is loopback-only and never leaves the machine.
   assert.ok(!/0\.0\.0\.0/.test(all), 'no routable bind anywhere in src');
-  // The carve-out stays narrow and local: opt-in, off by default, localhost only.
+  // The carve-out stays narrow and local: localhost only, and one setting away.
   const props = JSON.parse(fs.readFileSync('package.json', 'utf8')).contributes.configuration
     .properties as Record<string, { default?: unknown }>;
-  assert.equal(props['lalog.opencode.activity.enabled'].default, false, 'opt-in, off by default');
+  assert.equal(props['lalog.opencode.activity.enabled'].default, true, 'on by default; one setting turns it off');
   assert.match(
     String(props['lalog.opencode.activity.url'].default),
     /^http:\/\/127\.0\.0\.1:\d+$/,

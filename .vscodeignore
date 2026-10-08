@@ -6,6 +6,7 @@ out/
 **/*.map
 .gitignore
 .vscode/**
+.github/**
 test/**
 dist-test/**
 src/**

@@ -34,7 +34,7 @@ import { resolveProject } from './core/projects';
 
 let manager: SessionManager;
 /**
- * The opt-in opencode serve watcher, once it exists (see `activate`). Held here
+ * The opencode serve watcher, once it exists (see `activate`). Held here
  * only so a state change can wake it when tracking resumes; the manager keeps
  * single-owner lifecycle control (start on `start()`, `dispose()` on shutdown).
  */

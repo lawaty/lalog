@@ -554,24 +554,32 @@ test('US-7.2 · poll interval: 5s floor, debugTimeScale divisor, idleConfirm/3 c
   assert.equal(opencodePollMs(5, tiny, thresholdsMs(tiny)), 1, 'never below 1ms');
 });
 
-test('US-7.2 · the config namespace is off by default and independent of lalog.ai.enabled', () => {
+test('US-7.2 · the config namespace is on by default and independent of lalog.ai.enabled', () => {
   try {
     mockVscode.reset();
-    const off = readOpencodeActivityConfig();
-    assert.equal(off.enabled, false);
-    assert.equal(off.url, 'http://127.0.0.1:4096');
-    assert.equal(off.pollIntervalSec, 30);
-    assert.equal(off.discoverySec, 180);
-    assert.equal(off.authUser, 'opencode');
-    assert.equal(off.authPassword, undefined, 'unset means LaLog generates a random password');
-
-    mockVscode.setConfig('lalog.ai', { enabled: true });
-    assert.equal(readOpencodeActivityConfig().enabled, false, 'AI on does not turn it on');
-
-    mockVscode.setConfig('lalog.opencode.activity', { enabled: true });
     const on = readOpencodeActivityConfig();
     assert.equal(on.enabled, true);
-    assert.equal(on.url, 'http://127.0.0.1:4096', 'unset keys keep their defaults');
+    assert.equal(on.url, 'http://127.0.0.1:4096');
+    assert.equal(on.pollIntervalSec, 30);
+    assert.equal(on.discoverySec, 180);
+    assert.equal(on.authUser, 'opencode');
+    assert.equal(on.authPassword, undefined, 'unset means LaLog generates a random password');
+
+    mockVscode.setConfig('lalog.ai', { enabled: false });
+    assert.equal(
+      readOpencodeActivityConfig().enabled,
+      true,
+      'AI off does not turn it off'
+    );
+
+    // The one opt-out: a fully local, zero-request install.
+    mockVscode.setConfig('lalog.opencode.activity', { enabled: false });
+    assert.equal(readOpencodeActivityConfig().enabled, false);
+
+    mockVscode.setConfig('lalog.opencode.activity', { enabled: true });
+    const back = readOpencodeActivityConfig();
+    assert.equal(back.enabled, true);
+    assert.equal(back.url, 'http://127.0.0.1:4096', 'unset keys keep their defaults');
   } finally {
     mockVscode.reset();
   }
@@ -1058,7 +1066,7 @@ test('US-7.2 · the activity namespace gains the lifecycle keys with conservativ
     assert.equal(cfg.manageServe, false);
     assert.equal(cfg.spawnPort, 4096);
     assert.equal(cfg.opencodePath, '/bin/oc');
-    assert.equal(cfg.enabled, false, 'the opt-in is still separate from the lifecycle defaults');
+    assert.equal(cfg.enabled, true, 'the lifecycle keys are separate from the master switch');
   } finally {
     mockVscode.reset();
   }

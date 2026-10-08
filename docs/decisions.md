@@ -40,6 +40,7 @@
 - [ADR-030: Per-Workspace Projects Replace the Single-Project Union](#adr-030-per-workspace-projects-replace-the-single-project-union)
 - [ADR-032: opencode serve Activity Is Observed, Never Managed](#adr-032-opencode-serve-activity-is-observed-never-managed)
 - [ADR-033: Reuse-First opencode serve Lifecycle, Owned or Not At All (amends ADR-032)](#adr-033-reuse-first-opencode-serve-lifecycle-owned-or-not-at-all-amends-adr-032)
+- [ADR-034: opencode Chat Activity Is On by Default (amends ADR-032, ADR-033)](#adr-034-opencode-chat-activity-is-on-by-default-amends-adr-032-adr-033)
 
 ---
 
@@ -885,6 +886,46 @@ Three measurements change the picture.
 - SSE `GET /event` was measured and rejected (decision 7): it costs the server more than the polls it would replace. Revisit only if opencode's event stream stops doing server-side work per heartbeat.
 - Discovery is best-effort: on platforms without a cheap cwd lookup, or for a serve started without `--port`, LaLog sees nothing and simply starts its own (never two for the same window, because the next poll discovers it). A visible "reusing the serve on :4096" status line would make reuse legible instead of invisible.
 - Deliberately not done: remembering a spawned pid across restarts (the brand is per-process, by design) and reusing the `OPENCODE_SERVER_PASSWORD` of a discovered serve (it is never readable, so a discovered server is polled only when it is unauthenticated or already configured to match).
+
+---
+
+## ADR-034: opencode Chat Activity Is On by Default (amends ADR-032, ADR-033)
+
+**Status**: Accepted · **Amends**: [ADR-032](#adr-032-opencode-serve-activity-is-observed-never-managed) (the opt-in), [ADR-033](#adr-033-reuse-first-opencode-serve-lifecycle-owned-or-not-at-all-amends-adr-032) (decision 8: "`enabled` stays the opt-in and stays false by default") · **Reconciles with**: [ADR-005](#adr-005-local-only--zero-telemetry), [ADR-011](#adr-011-optional-ai-assistance-amends-adr-005)
+
+**Context**: ADR-033 built the machinery that makes the feature work without effort — discover a serve for this workspace and reuse it, spawn one only if there is nothing to reuse, authenticate it with a random password, stop only what it started. All of it sits behind `lalog.opencode.activity.enabled`, which shipped `false`. The result is that a feature engineered to be invisible is invisible by default: a fresh install launches a server manager, a poller and an authenticator and never runs any of it.
+
+The cost is not a missing feature, it is a wrong bill. `SessionManager.checkIdle` fires "Are you still there?" off `lastActivityAt`, and that field only advances from VS Code capture and from `onActivityEvent('opencode', …)`. With the watcher off, a developer working entirely inside an opencode chat with no keyboard activity is asked whether they are present while they demonstrably are — and if they answer "I was away", `trimIdleAwayWindow` deletes tracked time that was real. The product's central promise is that tracked time is time actually worked; a default that lets a live opencode session be trimmed away as phantom breaks it.
+
+The opt-in was defensible when observing meant *connecting to a server on a port the user had to remember* (ADR-032's world). After ADR-033 it does not describe the remaining cost. That cost is already bounded: nothing runs at all without an open LaLog session (`shouldObserve`), reuse means the common case — a user already running opencode — spawns no extra process, and the only data crossing the wire is the four metadata fields ADR-032 fixed.
+
+**Decision**:
+1. **`lalog.opencode.activity.enabled` defaults to `true`.** Observation is the expected behavior for an extension whose job is to know when you are working. `false` remains a supported, documented one-setting opt-out for a fully local, zero-request install, and `package.json` says so in the setting description.
+2. **Nothing else moves.** `manageServe` (true), `spawnPort` (0), `opencodePath`, the metadata-only contract, the loopback-only binding, the random password for a spawned serve, reuse-before-spawn, ownership-by-brand, and the adaptive two-tier cadence are all unchanged from ADR-033. This amendment changes *when the feature starts*, not what it is allowed to do.
+3. **Independence from `lalog.ai.enabled` is unchanged and still asserted.** AI off must not turn observation off, and observation on must not turn AI on — both directions are covered by tests, because the two opt-ins answer different questions.
+4. **Hermeticity is a test concern, not a product concern.** The test harness pins `lalog.opencode.activity.enabled: false` unless a test opts in, so the new product default cannot make `activate()` build a live watcher. ADR-033's decision 9 invariant — no test spawns a real process, reads `/proc`, or touches the network — survives the flip, and that is the only reason the flip is safe to make.
+5. **The settings-default assertions were rewritten, not deleted.** `nonGoals.test.ts` and `privacyConfig.test.ts` still assert the setting's default and the loopback `url` default; they now assert `true`. A privacy carve-out whose guard was deleted would be worse than no guard, and "on by default" is exactly the kind of claim that needs a test pinning it.
+
+**Reconciliation with ADR-005 and ADR-011**: still no amendment to ADR-005. Everything remains on `127.0.0.1` on the user's own machine, no telemetry is added, message content is never read, and no prompt is ever sent. The single new default behavior is a localhost metadata read plus — only when the user is already running opencode against this workspace and has no reusable serve — a local process the user could have started by hand. ADR-011's one-way rule is untouched: `core` still never imports `opencode/`, `core/types.ts` still owns `ServeActivityWatcher`, and `extension.ts` is still the only composition root.
+
+This is a deliberate reversal of a privacy-adjacent default, and it is recorded as one. The case for it is that the previous default made the extension misreport the user's working time, and a tool that bills phantom time as real is broken in a way a localhost read is not.
+
+**Rationale**:
+- **A default that silently under-reports is worse than a default that reads localhost.** The failure mode of `false` was invisible and wrong; the failure mode of `true` is visible, documented, and one setting away.
+- **ADR-033 already removed the scary part.** "LaLog will start a server" was the objection that justified opt-in; reuse-first, the random password and the owned-stop guarantee answered it. Keeping the opt-in after that answered it was inertia, not caution.
+- **`shouldObserve` keeps the blast radius at zero when idle.** No open LaLog session means no timer, no request, and no serve of its own — the on-by-default path is inert in an idle window, so the default costs nothing when there is nothing to observe.
+- **Reuse means the default usually adds no process.** A developer using opencode already has a serve for the workspace; ADR-033's `discoverServe` finds it by cwd and polls it read-only, so the common case is a few hundred bytes every 30 s against a server already in memory.
+
+**Implementation**:
+- `src/core/config.ts` — `OPENCODE_ACTIVITY_DEFAULTS.enabled` → `true`, and the interface comment.
+- `package.json` — the `lalog.opencode.activity.enabled` contribution: `default: true`, description rewritten to state the opt-out.
+- `test/helpers/harness.ts` — `activateExtension` pins the namespace to `{ enabled: false, ...opts.activity }`, replacing the previous "only set what the test cares about" behavior, so activation tests never construct a live watcher.
+- Tests — `opencodeServeActivity.test.ts` (the config-default test now asserts `true`, still asserts both directions of independence from `lalog.ai.enabled`, and now covers the explicit opt-out; the lifecycle-defaults test asserts the master switch is untouched by the lifecycle keys), `nonGoals.test.ts`, `privacyConfig.test.ts`.
+- Docs — `README.md`, `docs/features.md`, `docs/architecture.md`.
+
+**Future**:
+- The opt-out is discoverable only if the user looks. If the "Are you still there?" prompt fires while an opencode chat is provably active, that is a *detection* failure, not a config failure, and it deserves its own surface (ADR-033 already notes that a "reusing the serve on :4096" status line would make reuse legible).
+- If opencode ever exposes a cheap authenticated push for session `time.updated`, the polling cost argument in ADR-033 decision 7 should be re-measured against it.
 
 ---
 

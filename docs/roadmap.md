@@ -54,7 +54,7 @@ The current implementation (v0.1.0) includes:
 
 **Status**: Explicitly excluded.
 
-**Rationale**: LaLog is 100% local. No cloud sync, no server of its own, no auth. (The opt-in opencode activity feature only talks to a localhost `opencode serve` on `127.0.0.1` — one LaLog reuses if it finds, otherwise one it starts and later stops itself. LaLog still runs no server of its own.)
+**Rationale**: LaLog is 100% local. No cloud sync, no server of its own, no auth. (The opencode activity feature — on by default, one setting to turn off — only talks to a localhost `opencode serve` on `127.0.0.1` — one LaLog reuses if it finds, otherwise one it starts and later stops itself. LaLog still runs no server of its own.)
 
 **Alternative**: Users can point `lalog.dataDir` at a synced folder (e.g., Dropbox, Syncthing) for cross-machine sync. This is the user's responsibility, not the extension's.
 

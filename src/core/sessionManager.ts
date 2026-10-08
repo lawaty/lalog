@@ -758,7 +758,7 @@ export class SessionManager implements vscode.Disposable {
   start(): void {
     this.activity.start();
     this.breakpoints.start();
-    // Opencode chat activity (opt-in): the watcher only reports what it observed.
+    // Opencode chat activity (on unless the setting is off): the watcher only reports what it observed.
     this.serveWatcher?.start();
     // Technical capture: terminal shell execution events
     if (this.captureCfg.captureTerminal) {

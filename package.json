@@ -3,7 +3,7 @@
   "displayName": "LaLog",
   "description": "Local-first work session tracker with automatic event capture, human session descriptions, and optional opencode-powered AI assistance.",
   "icon": "resources/icon.png",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "publisher": "lawaty",
   "license": "MIT",
   "repository": {
@@ -176,8 +176,8 @@
         },
         "lalog.opencode.activity.enabled": {
           "type": "boolean",
-          "default": false,
-          "description": "Count an open opencode chat in this workspace as activity. OFF by default and independent of lalog.ai.enabled. LaLog reuses a local `opencode serve` you already run; if none is running and lalog.opencode.activity.manageServe is on, it starts one of its own on loopback, password-protected, and stops it again. It only reads session metadata (never message content) and never sends prompts."
+          "default": true,
+          "description": "Count an open opencode chat in this workspace as activity. ON by default and independent of lalog.ai.enabled — set it to false for fully local, zero-request behavior. LaLog reuses a local `opencode serve` you already run; if none is running and lalog.opencode.activity.manageServe is on, it starts one of its own on loopback, password-protected, and stops it again. It only reads session metadata (never message content) and never sends prompts."
         },
         "lalog.opencode.activity.manageServe": {
           "type": "boolean",
@@ -324,7 +324,8 @@
     "watch": "node esbuild.js --watch",
     "typecheck": "tsc --noEmit",
     "test": "node esbuild.test.js && node --test \"dist-test/**/*.test.js\"",
-    "package": "vsce package"
+    "package": "vsce package",
+    "publish:ovsx": "ovsx publish"
   },
   "devDependencies": {
     "@types/diff": "^7.0.2",
@@ -332,6 +333,7 @@
     "@types/vscode": "^1.93.0",
     "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.20.2",
+    "ovsx": "^1.2.0",
     "typescript": "^5.4.5"
   },
   "dependencies": {

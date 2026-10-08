@@ -90,7 +90,7 @@ Data is written to `~/.lalog/`:
 | `lalog.describeAfterMinutes` | `90` | When the describe checkpoint fires |
 | `lalog.wrapAfterMinutes` | `210` | When the wrap-and-continue prompt fires |
 | `lalog.ai.enabled` | `false` | Opt into opencode-powered AI assistance |
-| `lalog.opencode.activity.enabled` | `false` | Opt into counting an open opencode chat in this workspace as activity — LaLog reuses a local `opencode serve`, or starts one for you and stops it again when idle ([ADR-033](docs/decisions.md#adr-033-reuse-first-opencode-serve-lifecycle-owned-or-not-at-all-amends-adr-032), US-7.2) |
+| `lalog.opencode.activity.enabled` | `true` | Count an open opencode chat in this workspace as activity — LaLog reuses a local `opencode serve`, or starts one for you and stops it again when idle. Set `false` for a fully local, zero-request install ([ADR-034](docs/decisions.md), US-7.2) |
 | `lalog.dataDir` | `~/.lalog` | Where everything is stored |
 | `lalog.captureDiffs` | boolean | `true` | Capture unified diffs at save time |
 | `lalog.captureTerminal` | boolean | `true` | Capture terminal command metadata |
