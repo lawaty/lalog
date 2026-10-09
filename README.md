@@ -159,7 +159,7 @@ Data is written to `~/.lalog/`:
 
 ## Documentation & development
 
-Full docs live in [`docs/`](docs/README.md): architecture, ADRs, the JSONL data format, features, and development notes.
+Full docs live in [`docs/`](docs/README.md): architecture, ADRs, the JSONL data format, features, and development notes. Release history lives in [`CHANGELOG.md`](CHANGELOG.md).
 
 ```bash
 npm run typecheck   # TypeScript
@@ -169,4 +169,4 @@ npm test            # unit tests
 
 ## License
 
-[MIT](LICENSE) — take it, adapt it, make it yours.
+[MIT](LICENSE) — take it, adapt it, make it yours. If you build on it, keeping a credit line back to [lawaty/lalog](https://github.com/lawaty/lalog) is a kind and welcome one.

@@ -19,3 +19,19 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+---
+
+## Attribution
+
+This part isn't a legal requirement — the MIT terms above already require the
+copyright notice to travel with the software. This is just me asking.
+
+If you use, modify, or build on LaLog, I'd be glad if you kept my name on it. A
+line in your README or an "about" section — something like "based on LaLog by
+lawaty, https://github.com/lawaty/lalog" — is more than enough.
+
+And if you publish a fork, please leave the copyright line in place and say where
+the original came from. You're free to change anything else you like.
+
+Thanks. It means a lot.

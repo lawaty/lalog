@@ -8,7 +8,7 @@
 
 ## Overview
 
-LaLog (formerly "Worklog") is a VS Code extension (v0.6.0) that passively tracks your coding sessions — capturing edits, saves, terminal commands, file operations, debug sessions, and tasks — then prompts you at natural breakpoints to describe what you were working on. All data stays local in `~/.lalog/`.
+LaLog (formerly "Worklog") is a VS Code extension (v0.7.6) that passively tracks your coding sessions — capturing edits, saves, terminal commands, file operations, debug sessions, and tasks — then prompts you at natural breakpoints to describe what you were working on. All data stays local in `~/.lalog/`. Release history lives in [`CHANGELOG.md`](../CHANGELOG.md).
 
 AI assistance is **optional and off by default**: when enabled, LaLog uses the local `opencode` CLI to help draft session descriptions, add a narrative to reports, and produce a work review. It never captures or sends file contents or terminal output — only the compact session summary (file paths, counters, git branch, commit subjects).
 
