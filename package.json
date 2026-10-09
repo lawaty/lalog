@@ -3,7 +3,7 @@
   "displayName": "LaLog",
   "description": "Local-first work session tracker with automatic event capture, human session descriptions, and optional opencode-powered AI assistance.",
   "icon": "resources/icon.png",
-  "version": "0.7.4",
+  "version": "0.7.5",
   "publisher": "Lawaty",
   "license": "MIT",
   "repository": {
@@ -36,12 +36,12 @@
         "lalog.describeAfterMinutes": {
           "type": "number",
           "default": 90,
-          "description": "Active minutes after which LaLog prompts for a session description checkpoint."
+          "description": "Active minutes between description checkpoints, counted from your last answer to one."
         },
         "lalog.wrapAfterMinutes": {
           "type": "number",
           "default": 210,
-          "description": "Active minutes after which LaLog prompts to wrap the session (3.5h)."
+          "description": "Active minutes between wrap prompts, counted from your last answer to one (3.5h)."
         },
         "lalog.graceMinutes": {
           "type": "number",

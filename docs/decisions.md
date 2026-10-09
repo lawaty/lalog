@@ -929,6 +929,40 @@ This is a deliberate reversal of a privacy-adjacent default, and it is recorded 
 
 ---
 
+## ADR-035: A Prompt Threshold Is an Interval Since Your Answer, Not a Session Total
+
+**Status**: Accepted · **Reconciles with**: [ADR-003](#adr-003-active-time-only-no-idle-billing) (accrual), [ADR-007](#adr-007-auto-close-uses-lastactivityat) (auto-close)
+
+**Context**: `describeAfterMinutes` and `wrapAfterMinutes` were tested as cumulative totals for the whole session: `onActivity` asked `activeMinutes >= describeAt`. `activeMinutes` never resets while a session is open, so past the threshold the predicate is permanently true. Answering the prompt set the state back to `active`, and the *very next* activity event flipped it straight to `describePending` again. The next breakpoint — or the 30-minute force timer, which was never disarmed when a breakpoint delivered the prompt instead — presented the same question again.
+
+The report from the field was that prompts *stack*: leave for a while, answer one, and the others surface over the following minutes. In a reproduction, one describe answer produced four prompts. The wrap prompt had the same defect twice over: `skipped` left the state at `wrapPending` (so the next breakpoint re-asked), and `extend` set `grace`, which the next keystroke converted back to `wrapPending` because the same cumulative predicate held.
+
+The coordinator's mutex and min-spacing (US-3.1) never applied here: they stop two prompts being *visible* at once, which is a different question from whether a prompt is *due*. A prompt that is due again is not a stacked prompt until it appears — and once the user has answered, it should not be due at all.
+
+**Decision**:
+1. **Each prompt threshold is measured from an anchor, not from zero.** `Machine` carries `describeAnchor` / `wrapAnchor` (active-time ms). A checkpoint is due when `activeMinutes - anchor >= threshold`.
+2. **Every reply re-arms.** `rearmDescribe` / `rearmWrap` set the anchor to the active total of the moment the user answered. All outcomes count — described, background, deferred, skipped, dismissed — because each one is an answer, and the point is that the interval restarts from the response.
+3. **A force timer is disarmed when its prompt is shown by any other route** (`clearForceTimer`). Previously it was deleted only by firing, so a prompt delivered at a breakpoint left a timer that would re-ask later.
+4. **Wrap is evaluated before describe in `onActivity`.** `wrapAt` is always later than `describeAt`, so a due wrap interval subsumes describe; checking wrap first is what stops a `skip` on the wrap prompt from dropping to `active` with describe instantly due again. `rearmWrap` therefore re-arms both anchors — reaching wrap means describe is behind us.
+5. **`skip` and Esc on the wrap prompt return to `active` with the interval re-armed.** No grace window, no free extension spent. `extend` keeps the grace timer, and grace expiry now delivers the re-prompt directly (`presentWrap('force')`) rather than holding it for another 30-minute force window — US-3.8 says "re-prompted afterwards", and the grace expiry is the "afterwards".
+6. **Reductions clamp the anchors.** `adjustTrackedTime` and `trimIdleAwayWindow` lower `activeMinutes`; both pull the anchors back so a checkpoint is not left looking overdue, and a correction that retires the wrap interval clears its force and grace timers with it.
+
+**Rationale**:
+- **The user's mental model is an interval, not a budget.** "Every 90 minutes, tell me what I'm doing" means 90 minutes after the last time I told you. A cumulative reading makes the prompt a permanent condition of a long session, which is why it recurred.
+- **Answering is the event that ends the obligation.** Deferring and skipping are answers too, so all four paths re-arm; singling out the happy path would leave US-3.6 ("Later") nagging, which it did.
+- **Stacking and re-asking are the same bug seen from two sides.** Nothing was ever queued — each prompt was independently due because the total never fell back below the threshold. Fixing the anchor removes the cause rather than filtering the symptom at the prompt layer, so the mutex stays the single-prompt guarantee it was always meant to be.
+- **Order matters and is not cosmetic.** Wrap-before-describe is what makes `skip` coherent. The reverse order re-arms describe on the next event, which is the same failure one layer down.
+
+**Implementation**:
+- `src/core/stateMachine.ts` — `describeAnchor` / `wrapAnchor` on `Machine` (reset in `startSession`), `rearmDescribe` / `rearmWrap`, and the anchor-based predicates with wrap checked first.
+- `src/core/sessionManager.ts` — `rearmDescribe` on every describe outcome; `rearmWrap` on every wrap outcome with `skip`/dismiss returning to `active`; `enterWrapIfDue` (anchor-based, replacing the inline `activeMinutes >= wrapAt` checks in `applyDescribeResult`); `clearForceTimer` called when a prompt runs and when a correction retires the wrap interval; `armGraceTimer` delivering the re-prompt at expiry.
+- Tests — `prompts.test.ts` gains the re-arm cases (answer, defer, wrap-skip, and that a fresh interval asks exactly once); `adjustTime.test.ts`'s wrap-state precondition now asserts the re-armed outcome.
+
+**Future**:
+- `Machine.lastPromptAt` and `describeDefers` are still unused fields kept for shape compatibility. If a future feature needs a prompt history (e.g. "you were asked 4 times"), `lastPromptAt` is the natural home and should be persisted with the session rather than left in memory.
+
+---
+
 ## Related Pages
 
 - [Architecture](architecture.md) — module overview and data flow

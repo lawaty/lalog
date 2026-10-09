@@ -8,6 +8,8 @@ import {
   autoClose,
   onActivity,
   isStale,
+  rearmDescribe,
+  rearmWrap,
 } from '../core/stateMachine';
 import { SessionStore } from '../storage/sessionStore';
 import { ActivityTracker } from '../core/activityTracker';
@@ -415,8 +417,20 @@ export class SessionManager implements vscode.Disposable {
     this.openSpanStart = null;
     this.lastOutsideSpan = null;
     this.lastProgressActiveMin = res.activeMinutes;
-    if (this.machine.state === 'wrapPending' && res.activeMinutes < this.th.wrapAt) {
+    // Clamping down must not leave a checkpoint looking overdue: pull the anchors
+    // back so a reduced total is measured from the reduction, not from a total
+    // that no longer exists. With the wrap interval no longer due, both wrap
+    // states fall back to 'active' — and the grace timer goes with them, or it
+    // would re-open the prompt the correction just retired.
+    this.machine.describeAnchor = Math.min(this.machine.describeAnchor, res.activeMinutes);
+    this.machine.wrapAnchor = Math.min(this.machine.wrapAnchor, res.activeMinutes);
+    if (
+      (this.machine.state === 'wrapPending' || this.machine.state === 'grace') &&
+      res.activeMinutes - this.machine.wrapAnchor < this.th.wrapAt
+    ) {
       this.machine.state = 'active';
+      this.clearForceTimer('wrap');
+      this.clearGraceTimer();
     }
     this.scheduleSave();
     this.onStateChanged();
@@ -493,6 +507,8 @@ export class SessionManager implements vscode.Disposable {
     this.session.activityTs = trimmed.activityTs;
     this.session.activeMinutes = trimmed.activeMinutes;
     this.machine.activeMinutes = trimmed.activeMinutes;
+    this.machine.describeAnchor = Math.min(this.machine.describeAnchor, trimmed.activeMinutes);
+    this.machine.wrapAnchor = Math.min(this.machine.wrapAnchor, trimmed.activeMinutes);
     this.machine.lastActivityAt = askAt;
     this.openSpanStart = null;
   }
@@ -541,6 +557,18 @@ export class SessionManager implements vscode.Disposable {
     this.forceTimers.set(kind, timer);
   }
 
+  /**
+   * Disarm a pending force timer. Called whenever the prompt is delivered by
+   * any other route (a breakpoint, a manual command, a flow that already ran) —
+   * otherwise the stale timer would fire later and pop the same question again.
+   */
+  private clearForceTimer(kind: 'describe' | 'wrap'): void {
+    const timer = this.forceTimers.get(kind);
+    if (!timer) return;
+    clearTimeout(timer);
+    this.forceTimers.delete(kind);
+  }
+
   private presentDescribe(breakpoint: BreakpointKind | null): void {
     if (!this.session) return;
     if (this.session.anonymous) {
@@ -566,6 +594,9 @@ export class SessionManager implements vscode.Disposable {
 
   private async runDescribe(breakpoint: BreakpointKind | null, force = false): Promise<void> {
     if (!this.session) return;
+    // The prompt is being shown now, so any pending force timer for it is moot:
+    // leaving it armed would pop the very same question again later.
+    this.clearForceTimer('describe');
     const session = this.session;
     const sameAsLast = this.lastDescriptionFor ? await this.lastDescriptionFor(session.workspaceKey) : undefined;
     const result = await this.prompts.askDescribe(this.machine, session, breakpoint, sameAsLast, force);
@@ -575,6 +606,10 @@ export class SessionManager implements vscode.Disposable {
 
   private async applyDescribeResult(s: Session, result: DescribeResult): Promise<void> {
     const now = Date.now();
+    // Every outcome re-arms the checkpoint: the next describe prompt is a full
+    // interval away from this response, so the cumulative total never leaves the
+    // prompt permanently due (which is what made it re-ask on the next event).
+    rearmDescribe(this.machine);
     if (result.choice === 'described') {
       const text = result.text.trim();
       s.type = result.type;
@@ -583,24 +618,35 @@ export class SessionManager implements vscode.Disposable {
       s.needsDescription = false;
       s.notes.push({ at: now, text });
       this.machine.describedThisSession = true;
-      this.machine.state = this.machine.activeMinutes >= this.th.wrapAt ? 'wrapPending' : 'active';
-      if (this.machine.state === 'wrapPending') this.schedulePrompt('wrap');
+      this.enterWrapIfDue();
     } else if (result.choice === 'background') {
       s.anonymous = true;
       s.needsDescription = false;
       // Same wrap re-check as 'described': the describe flow may have been
       // entered from a wrap checkpoint ('add-description').
-      this.machine.state = this.machine.activeMinutes >= this.th.wrapAt ? 'wrapPending' : 'active';
-      if (this.machine.state === 'wrapPending') this.schedulePrompt('wrap');
-    } else if (result.choice === 'later') {
-      s.needsDescription = true;
-      this.machine.state = 'active';
+      this.enterWrapIfDue();
     } else {
+      // 'later' and 'skipped' both defer: flag it and keep tracking.
       s.needsDescription = true;
       this.machine.state = 'active';
     }
     this.scheduleSave();
     this.onStateChanged();
+  }
+
+  /**
+   * Leave the describe checkpoint for the wrap one when the wrap interval is
+   * already due — measured from the wrap anchor, not from a raw total, so a
+   * re-armed wrap interval is respected.
+   */
+  private enterWrapIfDue(): void {
+    const m = this.machine;
+    if (m.activeMinutes - m.wrapAnchor >= this.th.wrapAt) {
+      m.state = 'wrapPending';
+      this.schedulePrompt('wrap');
+    } else {
+      m.state = 'active';
+    }
   }
 
   private presentWrap(breakpoint: BreakpointKind | null): void {
@@ -611,10 +657,27 @@ export class SessionManager implements vscode.Disposable {
 
   private async runWrap(breakpoint: BreakpointKind | null): Promise<void> {
     if (!this.session) return;
+    this.clearForceTimer('wrap');
     const s = this.session;
     const result = await this.prompts.askWrap(this.machine, s, breakpoint);
-    if (result.choice === 'skipped') return;
-    await this.applyWrapResult(s, result);
+    // 'skipped' covers both "dismissed the picker" and "the coordinator refused
+    // to show it"; either way the wrap checkpoint is re-armed from this moment
+    // and the state leaves wrapPending, so the next breakpoint cannot re-ask the
+    // same unanswered prompt.
+    rearmWrap(this.machine);
+    if (result.choice !== 'skipped') {
+      await this.applyWrapResult(s, result);
+      return;
+    }
+    // Deferred, not extended: back to plain tracking with the wrap interval
+    // re-armed, so the question comes back only after another full wrapAt
+    // rather than on the next breakpoint or on a grace timer. No free extension
+    // is spent, and the activity clock is untouched — nothing was worked at the
+    // prompt.
+    this.machine.state = 'active';
+    this.clearGraceTimer();
+    this.scheduleSave();
+    this.onStateChanged();
   }
 
   private async applyWrapResult(s: Session, result: { choice: string }): Promise<void> {
@@ -634,15 +697,7 @@ export class SessionManager implements vscode.Disposable {
       this.machine.state = 'grace';
       this.machine.lastActivityAt = now;
       // grace window: re-arm wrap after grace, capped later by hardSplit via activity
-      this.clearGraceTimer();
-      const graceTimer = setTimeout(() => {
-        this.graceTimer = null;
-        if (!this.session || this.paused) return;
-        this.machine.state = 'wrapPending';
-        this.schedulePrompt('wrap');
-      }, this.th.grace);
-      setTimeout(() => graceTimer.unref(), 0);
-      this.graceTimer = graceTimer;
+      this.armGraceTimer();
       this.scheduleSave();
       this.onStateChanged();
       return;
@@ -651,6 +706,24 @@ export class SessionManager implements vscode.Disposable {
       await this.runDescribe(null);
       return;
     }
+  }
+
+  /**
+   * Re-prompt the wrap checkpoint when the grace window closes (US-3.8). The
+   * re-prompt *is* the grace expiry, so it is delivered directly rather than
+   * held for another force window — and the coordinator's mutex still keeps it
+   * from overlapping a prompt that happens to be open.
+   */
+  private armGraceTimer(): void {
+    this.clearGraceTimer();
+    const graceTimer = setTimeout(() => {
+      this.graceTimer = null;
+      if (!this.session || this.paused) return;
+      this.machine.state = 'wrapPending';
+      this.presentWrap('force');
+    }, this.th.grace);
+    setTimeout(() => graceTimer.unref(), 0);
+    this.graceTimer = graceTimer;
   }
 
   private lastDescriptionFor: ((wsKey: string) => Promise<string | undefined>) | null = null;

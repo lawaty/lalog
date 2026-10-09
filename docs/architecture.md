@@ -202,17 +202,17 @@ stateDiagram-v2
 
     idle --> active : first activity event (sessions always auto-start)
 
-    active --> describePending : activeMinutes >= describeAt (90min)
-    active --> wrapPending : activeMinutes >= wrapAt (210min) [if describePending skipped]
+    active --> wrapPending : activeMinutes - wrapAnchor >= wrapAt (210min) — checked first
+    active --> describePending : activeMinutes - describeAnchor >= describeAt (90min)
 
-    describePending --> active : user describes (choice: 'described')
-    describePending --> active : user defers (choice: 'later')
-    describePending --> wrapPending : activeMinutes >= wrapAt
+    describePending --> active : user describes / defers / skips (re-arms describeAnchor)
+    describePending --> wrapPending : wrap interval due while waiting for describe
 
     wrapPending --> grace : user extends (choice: 'extend')
+    wrapPending --> active : user skips (re-arms wrapAnchor, no grace spent)
     wrapPending --> idle : user wraps (choice: 'wrap-new') → endSession + startFresh
 
-    grace --> wrapPending : grace timer expires (30min)
+    grace --> wrapPending : grace timer expires (30min) → re-prompt
     grace --> describePending : maxGraceExtensions reached → must describe
 
     note right of idle : No session active
@@ -227,14 +227,23 @@ stateDiagram-v2
 | From | To | Trigger | Condition |
 |------|----|---------|-----------|
 | `idle` | `active` | `onActivity()` | First event after activation (sessions auto-start) |
-| `active` | `describePending` | `onActivity()` | `activeMinutes >= describeAt` (default 90 min) |
-| `active` | `wrapPending` | `onActivity()` | `activeMinutes >= wrapAt` (default 210 min) |
-| `describePending` | `active` | describe reply | User provides description or defers |
-| `describePending` | `wrapPending` | `onActivity()` | `activeMinutes >= wrapAt` while waiting for describe |
-| `wrapPending` | `grace` | wrap reply | User chooses "Extend 30 min" |
+| `active` | `wrapPending` | `onActivity()` | `activeMinutes - wrapAnchor >= wrapAt` (default 210 min) — evaluated first, subsumes describe |
+| `active` | `describePending` | `onActivity()` | `activeMinutes - describeAnchor >= describeAt` (default 90 min) |
+| `describePending` | `active` | describe reply | User provides a description, defers, or skips — `rearmDescribe` |
+| `describePending` | `wrapPending` | `onActivity()` | Wrap interval due while waiting for describe |
+| `wrapPending` | `grace` | wrap reply | User chooses "Extend 30 min" — `rearmWrap` + grace timer |
+| `wrapPending` | `active` | wrap reply | User skips or dismisses — `rearmWrap`, no grace spent |
 | `wrapPending` | `idle` | wrap reply | User chooses "Wrap & start new" → `endSession()` |
-| `grace` | `wrapPending` | timer | Grace period (30 min) expires |
+| `grace` | `wrapPending` | timer | Grace period (30 min) expires → re-prompt |
 | `grace` | `describePending` | `onActivity()` | `maxGraceExtensions` reached → must describe |
+
+**The anchors are what stop prompts from stacking.** `wrapAnchor` / `describeAnchor` hold the
+active-time total at the last answer; every reply path calls `rearmWrap` / `rearmDescribe`, so
+a threshold is an interval since your answer rather than a total since the session began.
+Without them the cumulative total stays above the threshold for the rest of the session and
+every subsequent activity event re-arms the pending prompt. Related: a force timer is
+disarmed as soon as its prompt is delivered by another route, so it cannot fire later and
+repeat a question already answered.
 
 ### Active Time Accrual
 
@@ -388,8 +397,13 @@ sequenceDiagram
 
     PC-->>SM: DescribeResult
     SM->>SM: applyDescribeResult(session, result)
-    Note over SM: state = active<br/>(or wrapPending if past wrapAt)
+    SM->>FSM: rearmDescribe() — describeAnchor = activeMinutes
+    Note over SM: state = active<br/>(or wrapPending if the wrap<br/>interval is due — enterWrapIfDue)
 ```
+
+Whichever route delivered the prompt, the reply re-arms the checkpoint. That is the whole
+anti-stacking rule: a threshold is measured from the last answer, so an answered prompt is
+retired and only one prompt is ever outstanding.
 
 ### Prompt Coordinator Mutex
 
@@ -397,6 +411,10 @@ The `PromptCoordinator` enforces:
 1. **One prompt visible at a time** — `acquire()` returns false if another prompt is showing
 2. **Minimum spacing** — at least 2 minutes between prompts (scaled by `debugTimeScale`)
 3. **Non-blocking** — if `acquire()` fails, the prompt is silently skipped (state remains pending)
+
+Neither the mutex nor the spacing is what keeps prompts from stacking. Stacking came from
+thresholds being cumulative totals, and is prevented by the checkpoint anchors (see *State
+Transitions*) plus disarming a force timer the moment its prompt is shown.
 
 ---
 

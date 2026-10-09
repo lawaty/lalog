@@ -145,6 +145,91 @@ test('US-3.5 · background work: anonymous, no more prompts, clears on describe'
   assert.equal(s.description, 'real description');
 });
 
+test('US-3.1 · answering re-arms the describe interval from the response moment', async (t) => {
+  // wrapAt is pushed out of the way: this is about the describe checkpoint alone.
+  const h = setupHarness(t, { config: { wrapAfterMinutes: 100000 } });
+  await h.start();
+  await h.work(95);
+  mockVscode.queueInputBox('first answer');
+  mockVscode.queueQuickPick('other');
+  h.debugEnd();
+  await h.flush();
+  assert.equal(h.manager.getSession()!.description, 'first answer');
+  const asked = () =>
+    mockVscode.promptCalls().filter((c) => c.kind === 'inputBox' && c.title === 'What are you working on?').length;
+  assert.equal(asked(), 1);
+
+  // Work on and take a breakpoint well inside a second full interval: the
+  // answered checkpoint must stay answered rather than re-asking.
+  await h.work(60);
+  assert.equal(h.manager.getMachine().state, 'active', 'not immediately pending again');
+  h.debugEnd();
+  await h.flush();
+  assert.equal(asked(), 1, 'a breakpoint does not re-ask the answered prompt');
+  h.terminalShellStart({ commandLine: 'ls' });
+  h.terminalShellEnd({ commandLine: 'ls' }, 0);
+  await h.flush();
+  await h.heartbeat();
+  assert.equal(asked(), 1, 'still one: the force timer cannot stack a second prompt');
+
+  // Only after a full describe interval of new active work does it come back —
+  // exactly once, whether the force timer or a breakpoint delivers it.
+  mockVscode.queueInputBox('second answer');
+  mockVscode.queueQuickPick('other');
+  await h.work(96);
+  assert.equal(asked(), 2, 'a fresh interval asks exactly once more');
+  assert.equal(h.manager.getSession()!.description, 'second answer');
+  await h.work(30);
+  h.debugEnd();
+  await h.flush();
+  assert.equal(asked(), 2, 'and the answer re-arms it again');
+});
+
+test('US-3.1 · a deferred description is not re-asked either', async (t) => {
+  const h = setupHarness(t, { config: { wrapAfterMinutes: 100000 } });
+  await h.start();
+  await h.work(95);
+  mockVscode.queueInputBox('');
+  mockVscode.queueQuickPick('later');
+  h.debugEnd();
+  await h.flush();
+  assert.equal(h.manager.getSession()!.needsDescription, true);
+  const asked = () =>
+    mockVscode.promptCalls().filter((c) => c.kind === 'inputBox' && c.title === 'What are you working on?').length;
+  await h.work(60);
+  h.debugEnd();
+  await h.flush();
+  await h.heartbeat();
+  assert.equal(asked(), 1, '"Later" defers, it does not queue another prompt');
+});
+
+test('US-3.7 · a skipped wrap prompt does not re-ask on the next breakpoint', async (t) => {
+  const h = setupHarness(t);
+  await h.start();
+  await h.work(95);
+  mockVscode.queueInputBox('long session');
+  mockVscode.queueQuickPick('other');
+  h.debugEnd();
+  await h.flush();
+  await h.driveToWrap();
+  assert.equal(h.manager.getMachine().state, 'wrapPending');
+  const wraps = () => mockVscode.promptCalls().filter((c) => c.title?.includes('wrap it up')).length;
+  mockVscode.queueQuickPick('skipped');
+  h.debugEnd();
+  await h.flush();
+  assert.equal(wraps(), 1);
+  assert.equal(h.manager.getMachine().graceExtensions, 0, 'skipping costs no free extension');
+
+  await h.work(60);
+  h.debugEnd();
+  await h.flush();
+  h.terminalShellStart({ commandLine: 'ls' });
+  h.terminalShellEnd({ commandLine: 'ls' }, 0);
+  await h.flush();
+  await h.heartbeat();
+  assert.equal(wraps(), 1, 'the unanswered wrap prompt is not stacked');
+});
+
 test('US-3.6 · later/skip flags needsDescription and continues', async (t) => {
   const h = setupHarness(t);
   await h.start();

@@ -194,8 +194,9 @@ Acceptance criteria are the observable, testable conditions that make the story 
 **As a** developer deep in flow, **I want** the description prompt to wait for a natural pause, **so that** it doesn't interrupt me.
 
 **Acceptance criteria**
-- Given ~90 active minutes (`describeAfterMinutes`), then the describe prompt is held until a breakpoint (terminal command end, debug terminate, return from idle) or forced after 30 minutes.
+- Given ~90 active minutes (`describeAfterMinutes`) since I last answered, then the describe prompt is held until a breakpoint (terminal command end, debug terminate, return from idle) or forced after 30 minutes.
 - Given only one prompt at a time and a minimum spacing between prompts, then prompts never stack.
+- Given I answered a prompt (described, deferred, or skipped), then the next one for that question waits a full interval from that moment — not from the session start, and not queued while I was away.
 
 ### US-3.2 — Text-first describe with pre-fill
 
@@ -249,6 +250,7 @@ Acceptance criteria are the observable, testable conditions that make the story 
 **Acceptance criteria**
 - Given I choose "Extend", then I get a 30-minute grace period and am re-prompted afterwards.
 - Given I've used `maxGraceExtensions` free extends, then a description is required to continue.
+- Given I choose "Skip" (or dismiss the prompt), then tracking continues, no free extension is spent, and the wrap prompt is not asked again until a full wrap interval has passed.
 
 ### US-3.9 — Periodic progress notes
 

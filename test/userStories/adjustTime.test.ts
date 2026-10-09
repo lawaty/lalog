@@ -137,7 +137,10 @@ async function liveWithWrongConfirm(h: {
 test('US-4.9 · a wrong "still working" is rolled back on the live session, which keeps tracking', async (t) => {
   const h = setupHarness(t, { config: { idleConfirmAfterMinutes: 15 } });
   const { outside, postReturn } = await liveWithWrongConfirm(h);
-  assert.equal(h.manager.getMachine().state, 'wrapPending');
+  // The wrap checkpoint was reached during the seed and its prompt dismissed, so
+  // the interval is re-armed and tracking is back in 'active' — the answer to the
+  // wrap question counts from that moment, not from the session start.
+  assert.equal(h.manager.getMachine().state, 'active', 'a dismissed wrap prompt re-arms the interval');
   const keepMs = postReturn.end - postReturn.start;
   assert.ok(keepMs > 0, 'there is real post-return work to spare');
 
@@ -157,7 +160,7 @@ test('US-4.9 · a wrong "still working" is rolled back on the live session, whic
   assert.equal(sumOf(s.activeSpans), s.activeMinutes);
   assert.equal(s.lastActivityAt, nowBefore, 'the clock restarts from the adjust moment');
   assert.ok(s.activityTs.every((ts) => ts <= postReturn.end), 'activityTs is filtered to the new tail');
-  assert.equal(h.manager.getMachine().state, 'active', 'wrapPending downgrades below the wrap threshold');
+  assert.equal(h.manager.getMachine().state, 'active', 'still tracking normally after the correction');
 
   // Only the new gap accrues, and the next save cannot resurrect the dropped time.
   await h.edit();

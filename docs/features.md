@@ -139,9 +139,24 @@ The `PromptCoordinator` enforces:
 2. **Minimum spacing** — at least 2 minutes between prompts (scaled by `debugTimeScale`)
 3. **Non-blocking** — if `acquire()` fails, the prompt is silently skipped
 
+### Prompt intervals count from your answer
+
+A prompt threshold is an **interval since the last time you answered that question**, not a
+total for the session. Each checkpoint keeps an anchor (`describeAnchor` / `wrapAnchor` in
+`core/stateMachine.ts`); it is due when `activeMinutes - anchor >= threshold`, and every
+outcome — described, background, deferred, skipped, extended, dismissed — re-arms the anchor
+to the active total of that moment.
+
+So answering the describe prompt at 90 minutes means the next one is due at 180 minutes of
+work, not at the next keystroke. Prompts never queue up while you are away: an unanswered
+prompt waits, and nothing else stacks behind it. Only one prompt is ever outstanding (the
+`PromptCoordinator` mutex), and a force timer is disarmed as soon as its prompt is delivered
+by any other route, so it cannot fire later and repeat the question.
+
 ### Describe Prompt (~90 active minutes)
 
-Triggered when `activeMinutes >= describeAt` (default 90 min). Delivered at a natural breakpoint or forced after 30 minutes.
+Triggered when `activeMinutes - describeAnchor >= describeAt` (default 90 min since the last
+describe answer). Delivered at a natural breakpoint or forced after 30 minutes.
 
 **Text-first flow** (a typed description is always submitted — never dropped in a filter box):
 
@@ -170,13 +185,15 @@ Triggered when `activeMinutes >= describeAt` (default 90 min). Delivered at a na
 
 ### Wrap Prompt (~3.5h active minutes)
 
-Triggered when `activeMinutes >= wrapAt` (default 210 min). Delivered at a natural breakpoint or forced after 30 minutes.
+Triggered when `activeMinutes - wrapAnchor >= wrapAt` (default 210 min since the last wrap
+answer). Delivered at a natural breakpoint or forced after 30 minutes. The wrap checkpoint is
+evaluated before the describe one — it is always the later threshold, so it subsumes it.
 
 **QuickPick** — "Session \<description\> at 3h30m — wrap it up?"
 
 Options:
 - `$(split-horizontal) Wrap session & start a new one` — close current, start fresh
-- `$(clock) Extend 30 min` — grace period, re-prompt after 30 min
+- `$(clock) Extend 30 min` — grace period, re-prompt when it expires
 - `$(pencil) Add/update description` — describe before wrapping
 - `$(mute) Skip` — handle later from sessions view
 
@@ -185,6 +202,10 @@ Options:
 - After `maxGraceExtensions` (default 3), the user **must** describe to continue
 - Grace period: 30 minutes, then re-prompt with wrap
 - Hard split at 5h (`hardSplit`) — coordinator handles auto-split
+
+**Skip** re-arms the wrap interval and returns to plain `active` tracking: no grace window,
+no free extension spent, and no re-ask on the next breakpoint. Dismissing the picker (Esc)
+behaves the same way.
 
 ### Breakpoint-Aligned Delivery
 
