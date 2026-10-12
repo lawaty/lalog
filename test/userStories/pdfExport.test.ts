@@ -169,9 +169,11 @@ test('US-6.6 · exportPdf command writes a personal PDF with toggles and opens i
   mockVscode.queueQuickPick('feature');
   await mockVscode.commands.executeCommand('lalog.describeNow');
   await flush();
-  mockVscode.fireEdit('/ws/src/a.ts');
-  t.mock.timers.tick(2000);
-  await flush();
+  for (let i = 0; i < 8; i++) {
+    mockVscode.fireEdit('/ws/src/a.ts');
+    t.mock.timers.tick(6000);
+    await flush();
+  }
   await mockVscode.commands.executeCommand('lalog.endSession');
   await flush();
 
@@ -266,9 +268,11 @@ test('US-6.7 · presets and resolvePdfOptions overlay toggles', () => {
 
 test('US-6.6 · exportPdf cancel and empty toggle selection are handled', async (t) => {
   const ext = await setupExtension(t);
-  mockVscode.fireEdit('/ws/src/a.ts');
-  t.mock.timers.tick(2000);
-  await flush();
+  for (let i = 0; i < 8; i++) {
+    mockVscode.fireEdit('/ws/src/a.ts');
+    t.mock.timers.tick(6000);
+    await flush();
+  }
   await mockVscode.commands.executeCommand('lalog.endSession');
   await flush();
 

@@ -234,9 +234,12 @@ test('US-4.8 · fmtHM is local and zero-padded', () => {
 test('US-4.8 · clicking a session row opens its detail document', async (t) => {
   const ext = await setupExtension(t, { config: { captureDiffs: true } });
   const store = new SessionStore({ paths: ext.paths, th: ext.th });
-  mockVscode.fireEdit('/ws/a.ts');
-  t.mock.timers.tick(2000);
-  await flush();
+  // Long enough that the close is recorded: the row must come from the closed log.
+  for (let i = 0; i < 8; i++) {
+    mockVscode.fireEdit('/ws/a.ts');
+    t.mock.timers.tick(6000);
+    await flush();
+  }
   mockVscode._openTextContent = 'line1\nline2\n';
   mockVscode.fireSave('/ws/a.ts');
   await flush();
@@ -523,9 +526,12 @@ test('US-6.9 · the day-diffs doc, the Sessions tab, and the timeline agree on o
   t.mock.timers.setTime(late);
   mockVscode.fireEdit('/ws/late.ts');
   t.mock.timers.tick(2000);
-  mockVscode.fireEdit('/ws/late.ts');
-  t.mock.timers.tick(3000);
-  await flush();
+  // Long enough that the close is recorded; still 23:30 local on 2026-09-21.
+  for (let i = 0; i < 8; i++) {
+    mockVscode.fireEdit('/ws/late.ts');
+    t.mock.timers.tick(6000);
+    await flush();
+  }
   await mockVscode.commands.executeCommand('lalog.endSession');
   await flush();
 

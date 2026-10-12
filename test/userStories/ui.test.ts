@@ -54,6 +54,13 @@ test('US-4.2 · quick actions map to commands', async (t) => {
   provider.resolveWebviewView(mockWebviewView());
   await flush();
 
+  // Some real tracked work first, so the End below has a session worth saving.
+  for (let i = 0; i < 8; i++) {
+    mockVscode.fireEdit('/ws/a.ts');
+    t.mock.timers.tick(6000);
+    await flush();
+  }
+
   // Describe
   mockVscode.queueQuickPick('describe');
   mockVscode.queueInputBox('quick desc');
@@ -118,10 +125,10 @@ test('US-4.3 · sessions grouped by day, newest first', async (t) => {
   const h = setupHarness(t);
   t.mock.timers.setTime(new Date(2026, 8, 20, 10, 0).getTime());
   await h.start();
-  await h.edit('/ws/a.ts');
+  await h.work(40); // long enough that the close is actually recorded
   await h.manager.endSession('user');
   t.mock.timers.setTime(new Date(2026, 8, 21, 9, 30).getTime());
-  await h.edit('/ws/b.ts');
+  await h.work(40);
   await h.manager.endSession('user');
   resolvePanel(h);
   await waitFor(() => lastState() !== null);
@@ -140,8 +147,7 @@ test('US-4.3 · a 23:30 session files under its local day everywhere', async (t)
   const late = new Date(2026, 8, 21, 23, 30).getTime();
   t.mock.timers.setTime(late);
   await h.start();
-  await h.edit('/ws/a.ts');
-  await h.work(5);
+  await h.work(40); // long enough to be recorded; still 23:30 local on 2026-09-21
   const live = h.manager.getSession()!;
   const expected = '2026-09-21';
   assert.equal(dayKey(live.startedAt), expected, 'fixture really is 23:30 local on 2026-09-21');
@@ -163,7 +169,7 @@ test('US-4.3 · a 23:30 session files under its local day everywhere', async (t)
 test('US-4.4 · session detail includes split, type, reason, events, files, notes, git', async (t) => {
   const h = setupHarness(t);
   await h.start();
-  await h.work(30);
+  await h.work(40); // long enough that the close is actually recorded
   const s = h.manager.getSession()!;
   s.description = 'drill down';
   s.type = 'feature';
@@ -190,7 +196,7 @@ test('US-4.4 · session detail includes split, type, reason, events, files, note
 test('US-4.4 · detail actions: assign project and background toggle', async (t) => {
   const h = setupHarness(t);
   await h.start();
-  await h.work(10);
+  await h.work(40); // long enough that the close is actually recorded
   const { view, registry } = resolvePanel(h);
   await flush();
   const proj = registry.create({ name: 'Client A', workspaceKey: h.wsKey });
@@ -215,6 +221,12 @@ test('US-4.5 · Now box data and buttons', async (t) => {
   const view = mockWebviewView();
   provider.resolveWebviewView(view);
   await flush();
+  // Some real tracked work first, so the End below has a session worth saving.
+  for (let i = 0; i < 8; i++) {
+    mockVscode.fireEdit('/ws/a.ts');
+    t.mock.timers.tick(6000);
+    await flush();
+  }
   mockVscode.queueInputBox('now box');
   mockVscode.queueQuickPick('feature');
   await mockVscode.commands.executeCommand('lalog.describeNow');
@@ -243,12 +255,12 @@ test('US-4.5 · Now box data and buttons', async (t) => {
 test('US-4.6 · project filter logic over the sessions list', async (t) => {
   const h = setupHarness(t);
   await h.start();
-  await h.work(10);
+  await h.work(40); // long enough that both closes are actually recorded
   const { provider, registry } = resolvePanel(h);
   const proj = registry.create({ name: 'Client A' });
   h.manager.assignProject(proj.id);
   await h.manager.endSession('user');
-  await h.edit('/ws/other.ts');
+  await h.work(40);
   await h.manager.endSession('user');
   provider.refresh();
   await waitFor(() => {
@@ -274,9 +286,13 @@ test('US-4.6 · project filter logic over the sessions list', async (t) => {
 });
 
 async function seedClosedSession(t: any, ext: any, file: string): Promise<void> {
-  mockVscode.fireEdit(file);
-  t.mock.timers.tick(2000);
-  await flush();
+  // Long enough that the close is actually recorded: a session below the 30s
+  // floor is dropped by design and would never reach the sessions list.
+  for (let i = 0; i < 8; i++) {
+    mockVscode.fireEdit(file);
+    t.mock.timers.tick(6000);
+    await flush();
+  }
   await mockVscode.commands.executeCommand('lalog.endSession');
   await flush();
 }
@@ -393,7 +409,7 @@ test('US-4.7 · live session and unknown ids are not deletable', async (t) => {
 test('US-6.8 · timeline cells carry the session ids behind each hour', async (t) => {
   const h = setupHarness(t);
   await h.start();
-  await h.work(30);
+  await h.work(40); // long enough that the close is actually recorded
   const live = h.manager.getSession()!;
   await h.manager.endSession('user');
   resolvePanel(h);

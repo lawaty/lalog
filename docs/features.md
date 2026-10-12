@@ -250,6 +250,10 @@ Closed sessions are appended to `~/.lalog/sessions.jsonl`:
 - **Human-readable** — `cat sessions.jsonl | jq .` works
 - **Exception**: `updateSession()` rewrites the full file (used by "Edit session" command)
 
+### Minimum Session Duration
+
+A closed session is appended to `sessions.jsonl` only if it accumulated at least **30 seconds** of active time. A shorter session — an accidental start, a near-instant wrap, a session closed seconds after it began — is **silently discarded**: no row is written, and there is no prompt or setting for it. Because every close path runs through `SessionStore.close`, the rule holds however a session ends, including crash recovery; the active snapshot is removed either way, so a discarded session cannot reappear on the next startup.
+
 ### Active Session Snapshots
 
 Active sessions are persisted as atomic JSON snapshots in `~/.lalog/active/<wsKey>.json`:

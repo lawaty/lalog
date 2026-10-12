@@ -740,6 +740,14 @@ test('US-7.2 · enabled: the composition root polls the configured URL and recor
   assert.equal(calls[0], 'http://127.0.0.1:4096/session', 'the configured URL is polled');
   assert.ok(calls.length >= 2, `kept polling (${calls.length} polls)`);
 
+  // Editor-switch activity only: it accrues time without touching the counters
+  // this test asserts on (no edits, no extra opencode bumps).
+  for (let i = 0; i < 8; i++) {
+    mockVscode.fireEditorChange('/ws/a.ts');
+    t.mock.timers.tick(6000);
+    await flush();
+  }
+
   await mockVscode.commands.executeCommand('lalog.endSession');
   await flush();
   const closed = await new SessionStore({ paths: ext.paths, th: ext.th }).loadAll();

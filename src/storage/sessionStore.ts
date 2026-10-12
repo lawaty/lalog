@@ -14,6 +14,16 @@ export interface SessionStoreOptions {
   th: ThresholdsMs;
 }
 
+/**
+ * A closed session shorter than this is dropped instead of appended: it would render as
+ * "0m" (`fmtDuration`, prompts/promptCoordinator.ts: `Math.round(ms / 60000)`), which is
+ * worse than no record at all. This is a *display* boundary in the same clock domain as
+ * `activeMinutes`, so it is deliberately NOT routed through `thresholdsMs()` /
+ * `debugTimeScale` — scaling it (60 in the test harness) would collapse it to 500ms and
+ * make tests drop sessions they are meant to keep. Do not "fix" it into a threshold.
+ */
+const MIN_SAVED_SESSION_MS = 30000;
+
 /** In-memory event buffer for active sessions, persisted as snapshots. */
 export class SessionStore {
   constructor(private opts: SessionStoreOptions) {}
@@ -40,11 +50,19 @@ export class SessionStore {
     }
   }
 
-  /** Record a closed session permanently and remove its active snapshot. */
+  /**
+   * Record a closed session permanently and remove its active snapshot. A session that
+   * would render as "0m" is dropped instead of appended — silently, never prompted about
+   * (ADR-017 / ADR-019). The snapshot is removed on BOTH paths: a dropped session whose
+   * snapshot survived would be re-loaded by `loadActive` on the next startup, re-enter
+   * recovery (`finishRecovered`) and be dropped again forever.
+   */
   async close(s: Session, reason: ClosedReason, endedAt: number): Promise<void> {
     s.closedReason = reason;
     s.endedAt = s.lastActivityAt = endedAt;
-    appendLine(this.opts.paths.sessionsFile, s);
+    if (s.activeMinutes >= MIN_SAVED_SESSION_MS) {
+      appendLine(this.opts.paths.sessionsFile, s);
+    }
     this.removeActive(s.workspaceKey);
   }
 

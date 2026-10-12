@@ -195,7 +195,11 @@ test('US-6.5 · CSV export writes sessions-<date>.csv', async (t) => {
 test('US-6.5 · files_by_day legacy export groups by project slug and day', async (t) => {
   const h = setupHarness(t);
   await h.start();
-  await h.edit('/ws/src/auth.ts');
+  // Long enough that the close is actually recorded; 8s gaps stay under idleGap.
+  for (let i = 0; i < 8; i++) {
+    await h.edit('/ws/src/auth.ts');
+    await h.tick(6000);
+  }
   await h.manager.endSession('user');
   const closed = await h.closedSessions();
   const written = await exportFilesByDay(h.paths, closed);
@@ -210,7 +214,11 @@ test('US-6.5 · files_by_day uses local day keys', async (t) => {
   // 23:30 local: a UTC key would file the edit under the next day.
   t.mock.timers.setTime(new Date(2026, 8, 21, 23, 30).getTime());
   await h.start();
-  await h.edit('/ws/src/late.ts');
+  // Long enough that the close is actually recorded, still 23:30 local.
+  for (let i = 0; i < 8; i++) {
+    await h.edit('/ws/src/late.ts');
+    await h.tick(6000);
+  }
   await h.manager.endSession('user');
   const closed = await h.closedSessions();
   const written = await exportFilesByDay(h.paths, closed);

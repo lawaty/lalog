@@ -37,6 +37,7 @@ test('US-1.1 · recovery-skip of a leftover snapshot on reopen', async (t) => {
   fs.mkdirSync(wsPath, { recursive: true });
   const wsKey = workspaceKey(wsPath);
   const leftover = store.newSession(wsKey, 'workspace', 1000);
+  leftover.activeMinutes = 60_000; // over the 30s floor, so recovery records it
   leftover.lastActivityAt = 5000;
   store.saveActive(leftover);
   mockVscode.setWorkspaceFolders([wsPath]);
@@ -82,11 +83,11 @@ test('US-1.2 · gaps within idleGap count as active time', async (t) => {
 test('US-1.2 · idle gap not counted; endedAt = lastActivityAt', async (t) => {
   const h = setupHarness(t);
   await h.start();
-  await h.work(15);
+  await h.work(45); // 9 events, 8 gaps of 5s
   await h.tick(20_000); // 20s idle
   await h.edit();
   const s = h.manager.getSession()!;
-  assert.equal(s.activeMinutes, 10 * 1000, 'the 20s gap is not counted');
+  assert.equal(s.activeMinutes, 40 * 1000, 'the 20s gap is not counted');
   await h.manager.endSession('user');
   const closed = (await h.closedSessions())[0];
   assert.equal(closed.endedAt, closed.lastActivityAt);
@@ -136,9 +137,11 @@ test('US-1.3 · "I was away" trims and continues the same session', async (t) =>
 test('US-1.3 · "No, end" closes trimmed at the prompt moment + fresh starts', async (t) => {
   const h = setupHarness(t, { config: { idleConfirmAfterMinutes: 15 } });
   await h.start();
-  h.editor();
+  await h.work(40); // 35s of active time before the idle window opens
   mockVscode.gateQuickPick();
-  await h.tick(60_000); // prompt asked at 60s
+  // The work above moved the clock to +40s, so this tick window ends at +100s:
+  // the heartbeat is evaluated with the clock at the end of the tick.
+  await h.tick(60_000); // prompt asked at 100s
   await h.flush();
   await h.tick(60_000); // answer arrives later
   await h.flush();
@@ -147,7 +150,7 @@ test('US-1.3 · "No, end" closes trimmed at the prompt moment + fresh starts', a
   const closed = await h.closedSessions();
   assert.equal(closed.length, 1);
   assert.equal(closed[0].closedReason, 'user');
-  assert.equal(closed[0].endedAt, BASE_TIME + 60 * 1000, 'trimmed to the prompt moment');
+  assert.equal(closed[0].endedAt, BASE_TIME + 100 * 1000, 'trimmed to the prompt moment');
   await h.edit();
   assert.ok(h.manager.getSession(), 'fresh session starts on next event');
 });
@@ -344,9 +347,11 @@ test('US-1.3 · non-default idleGap changes statusBar live-tail cap and legacy s
 });
 
 test('US-1.4 · stale cutoff force-closes and starts fresh, no continue option', async (t) => {
-  const h = setupHarness(t, { config: { staleSessionAfterMinutes: 60, autoEndAfterIdleMinutes: 120 } });
+  // staleAfter is scaled down to 25m so the 35s of work below is still on the
+  // clock when the single heartbeat hits the cutoff exactly.
+  const h = setupHarness(t, { config: { staleSessionAfterMinutes: 25, autoEndAfterIdleMinutes: 120 } });
   await h.start();
-  await h.edit(); // lastActivityAt = t0
+  await h.work(40); // lastActivityAt = t0 + 35s
   await h.tick(60_000); // first heartbeat: exactly staleAfter idle → force close + fresh
   await h.flush();
   const closed = await h.closedSessions();
@@ -360,9 +365,9 @@ test('US-1.4 · stale cutoff force-closes and starts fresh, no continue option',
 });
 
 test('US-1.4 · staleAfter wins over autoEndIdle', async (t) => {
-  const h = setupHarness(t, { config: { staleSessionAfterMinutes: 60, autoEndAfterIdleMinutes: 120 } });
+  const h = setupHarness(t, { config: { staleSessionAfterMinutes: 25, autoEndAfterIdleMinutes: 120 } });
   await h.start();
-  await h.edit();
+  await h.work(40);
   await h.tick(120_000);
   await h.flush();
   const closed = await h.closedSessions();
@@ -375,7 +380,7 @@ test('US-1.4 · staleAfter wins over autoEndIdle', async (t) => {
 test('US-1.4 · answering an old prompt after stale close cannot affect the fresh session', async (t) => {
   const h = setupHarness(t, { config: { idleConfirmAfterMinutes: 15, staleSessionAfterMinutes: 120 } });
   await h.start();
-  await h.edit();
+  await h.work(40); // 35s of active time, so the stale close is a recordable one
   mockVscode.gateQuickPick();
   await h.tick(60_000); // heartbeat 1: idle prompt asked (gated), not stale yet
   await h.flush();
@@ -484,7 +489,7 @@ test('US-1.8 · workspace-scoped tracking with stable keys', async (t) => {
 test('US-1.9 · abnormal-exit recovery closes leftover as recovery-skip without prompting', async (t) => {
   const h = setupHarness(t);
   await h.start();
-  await h.edit();
+  await h.work(40);
   h.manager.dispose(); // abnormal exit: snapshot left behind
   const h2 = createHarness(t, { dir: h.dir });
   await h2.start();
@@ -500,7 +505,7 @@ test('US-1.9 · abnormal-exit recovery closes leftover as recovery-skip without 
 test('US-1.9 · vscode-shutdown session is never reopened or re-probed', async (t) => {
   const h = setupHarness(t);
   await h.start();
-  await h.edit();
+  await h.work(40);
   await h.manager.shutdown();
   const closed = await h.closedSessions();
   assert.equal(closed.length, 1);

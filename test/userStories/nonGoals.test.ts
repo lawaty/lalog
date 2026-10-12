@@ -42,8 +42,8 @@ const OPENCODE_FILES = [SERVE_WATCHER, SERVE_PROCESS];
 test('non-goal · no continue/resume option on a stale session', async (t) => {
   const h = setupHarness(t, { config: { staleSessionAfterMinutes: 60 } });
   await h.start();
-  await h.edit();
-  await h.tick(60_000);
+  await h.work(40); // 35s of active time, so the stale close is a recordable one
+  await h.tick(120_000); // the 2nd heartbeat is the first one past staleAfter
   await h.flush();
   const closed = await h.closedSessions();
   assert.equal(closed.length, 1);

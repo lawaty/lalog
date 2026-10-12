@@ -43,7 +43,7 @@ const OPENCODE_FILES = [SERVE_WATCHER, SERVE_PROCESS];
 test('US-8.1 · all data stays under the data dir; no network code outside the opencode serve modules', async (t) => {
   const h = setupHarness(t);
   await h.start();
-  await h.edit();
+  await h.work(40); // long enough that the close is actually recorded
   await h.manager.endSession('user');
   assert.ok(fs.existsSync(path.join(h.dir, 'sessions.jsonl')));
   assert.ok(fs.existsSync(path.join(h.dir, 'active')));
@@ -87,9 +87,12 @@ test('US-8.2 · dataDir is respected (tilde expands to home)', () => {
 
 test('US-8.2 · extension writes everything under the configured dataDir', async (t) => {
   const ext = await setupExtension(t);
-  mockVscode.fireEdit('/ws/a.ts');
-  t.mock.timers.tick(2000);
-  await flush();
+  // Long enough that the close is recorded, so sessions.jsonl really gets written.
+  for (let i = 0; i < 8; i++) {
+    mockVscode.fireEdit('/ws/a.ts');
+    t.mock.timers.tick(6000);
+    await flush();
+  }
   await mockVscode.commands.executeCommand('lalog.endSession');
   await flush();
   assert.ok(fs.existsSync(path.join(ext.paths.dataDir, 'sessions.jsonl')));
@@ -139,7 +142,7 @@ test('US-8.3 · redactText: compile, invalid skip, case-insensitive global', () 
 test('US-8.4 · closed sessions are append-only JSONL; active snapshot deleted on close', async (t) => {
   const h = setupHarness(t);
   await h.start();
-  await h.edit();
+  await h.work(40);
   const s = h.manager.getSession()!;
   assert.ok(fs.existsSync(h.store.snapshotPath(h.wsKey)), 'active snapshot exists');
   await h.manager.endSession('user');

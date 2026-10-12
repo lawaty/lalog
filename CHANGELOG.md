@@ -14,6 +14,15 @@ behind a design choice, see [`docs/decisions.md`](docs/decisions.md).
 
 ## [Unreleased]
 
+## [0.7.7] - 2026-10-13
+
+### Changed
+
+- **Sessions with less than 30 seconds of active time are silently dropped** instead of
+  appended to `sessions.jsonl` — they would render as `0m` and add no history. It applies to
+  every way a session ends (manual, idle, wrap, stale cutoff, shutdown, recovery), with no
+  prompt and no setting.
+
 ## [0.7.6] - 2026-10-10
 
 ### Added

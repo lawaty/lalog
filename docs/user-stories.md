@@ -583,6 +583,17 @@ Acceptance criteria are the observable, testable conditions that make the story 
 - Given `lalog.diffRetentionDays: 0`, then nothing is ever pruned.
 - Given a file in `technical/` that is not a session sidecar, then it is never read or rewritten.
 
+### US-8.8 — Keep a session too short to display out of my history
+
+**As a** developer, **I want** a session that would show as "0m" left out of my history, **so that** every listed session is a real stretch of work.
+
+**Acceptance criteria**
+- Given a session closed with less than 30 seconds of active time, then it is not appended to `sessions.jsonl` — silently, with no prompt and no setting.
+- Given exactly 30 seconds of active time, then it is saved (the boundary is inclusive).
+- Given a dropped session, then its active snapshot is still removed, so the next launch never recovers and re-drops it.
+- Given however the session ended (manual end, auto-idle close, shutdown, crash recovery), then the same rule applies.
+- Given a session of any length, then it is never silently *modified* — the only difference is recorded or not.
+
 ---
 
 ## 9. Optional AI Assistance
