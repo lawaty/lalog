@@ -16,6 +16,15 @@ behind a design choice, see [`docs/decisions.md`](docs/decisions.md).
 
 ## [0.7.7] - 2026-10-13
 
+### Added
+
+- **Existing sub-30-second sessions are pruned from `sessions.jsonl`** on the first
+  activation after upgrading — the 30-second rule applied retroactively to the "0m" rows
+  recorded before it existed. The migration is silent, one-time, and idempotent (it rewrites
+  nothing once nothing matches), and the complete original is kept at
+  `sessions.jsonl.pre-prune-short.bak`, written once and never overwritten
+  ([ADR-036](docs/decisions.md)).
+
 ### Changed
 
 - **Sessions with less than 30 seconds of active time are silently dropped** instead of

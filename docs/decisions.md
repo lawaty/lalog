@@ -41,6 +41,7 @@
 - [ADR-032: opencode serve Activity Is Observed, Never Managed](#adr-032-opencode-serve-activity-is-observed-never-managed)
 - [ADR-033: Reuse-First opencode serve Lifecycle, Owned or Not At All (amends ADR-032)](#adr-033-reuse-first-opencode-serve-lifecycle-owned-or-not-at-all-amends-adr-032)
 - [ADR-034: opencode Chat Activity Is On by Default (amends ADR-032, ADR-033)](#adr-034-opencode-chat-activity-is-on-by-default-amends-adr-032-adr-033)
+- [ADR-036: One-Time Backfill Prunes Sub-30s Sessions at Activation](#adr-036-one-time-backfill-prunes-sub-30s-sessions-at-activation)
 
 ---
 
@@ -960,6 +961,34 @@ The coordinator's mutex and min-spacing (US-3.1) never applied here: they stop t
 
 **Future**:
 - `Machine.lastPromptAt` and `describeDefers` are still unused fields kept for shape compatibility. If a future feature needs a prompt history (e.g. "you were asked 4 times"), `lastPromptAt` is the natural home and should be persisted with the session rather than left in memory.
+
+---
+
+## ADR-036: One-Time Backfill Prunes Sub-30s Sessions at Activation
+
+**Status**: Accepted
+
+**Context**: The 30-second floor added in 0.7.7 (`MIN_SAVED_SESSION_MS`, `SessionStore.close`) stops new "0m" rows from being written, but does nothing about the rows already in `sessions.jsonl`. On the maintainer's own data, 134 of 248 rows were under 30 seconds — 121 of them exactly `activeMinutes === 0` — with the dominant closed reasons `auto-idle` (74), `recovery-skip` (30) and `vscode-shutdown` (24). Those rows render as `0m`, inflate every total, and were recorded under a rule that no longer exists. Removing them means rewriting the user's only session history at startup, which is the one operation the append-only design (ADR-004) exists to avoid — so the migration has to be safe against every failure mode a rewrite can have.
+
+**Decision**:
+1. **`SessionStore.pruneShortSessions()` runs once at activation, before `manager.start()`**, and drops every line whose `activeMinutes` is a number below `MIN_SAVED_SESSION_MS`. It is silent — no prompt, no notification, no setting — consistent with ADR-017/019/020, and it runs before `start()` so it can never race the extension's own writes (recovery closes and appends through `close()`).
+2. **Raw-line filtering, per ADR-023 decision 2.** The filter reads the file's lines directly, never `loadAll()` — which dedupes, normalizes and re-sorts, and would rewrite the user's whole history to prune a few rows. Malformed lines and blank lines are preserved verbatim; a line whose `activeMinutes` is not a number cannot be judged and is kept; both lines of a duplicated sub-floor id are dropped, exactly as `deleteSession` does.
+3. **Idempotent by data shape, not by a persisted flag.** When nothing matches, the method returns 0 having written nothing at all. A crash mid-migration simply re-runs on the next activation and no-ops. No version marker is introduced.
+4. **A one-time backup is written before the rewrite**: `sessions.jsonl.pre-prune-short.bak` holds the complete original, written only if absent (the `splitLegacyCollapse` idiom, ADR-030) and never overwritten, so a re-run can never clobber the true original.
+5. **A re-stat guard closes the concurrent-append window.** `sessions.jsonl` is appended on every session close, and a second VS Code window sharing the same `dataDir` is real. The file is stat'ed before the read and again before the rename; if size or mtime changed, the rewrite is skipped and nothing is lost. A stray `.tmp` from an interrupted write is removed first, as `TechnicalStore.pruneDiffEntriesBefore` does (ADR-026).
+6. **The rewrite reuses `writeSessionsFile`** (tmp + rename) — the atomic path `deleteSession` and `updateSession` already use, and the hardening ADR-023's "Future" paragraph asked for.
+
+**Rationale**:
+- **A silent bulk rewrite of the user's only history is justified because it removes exactly the rows the new rule refuses to record.** The migration applies the shipped policy retroactively; it deletes nothing a fresh install would ever produce. Prompting was rejected for the same reasons the close-time drop is unprompted (ADR-017/019/020), and an activation-time modal is unanswerable in the same ways `endSession` from the heartbeat is.
+- **Shape-based idempotency beats a once-flag or a `dataVersion` marker.** A persisted "has run" flag is state that can desync from the data: flag set while the file was restored from backup leaves the rows forever; flag lost re-runs a prune that is harmless but lies about having run. The shape guard is self-validating — it does work only while work exists. A version marker was rejected because this codebase has no version-gated upgrade path to hang it on: `ProjectFile.version` (`projectRegistry.ts:9-13`) is written by `save()` and **never read** — `load()` at `:50-58` ignores it — so introducing a marker would mean inventing a mechanism the codebase does not use.
+- **The backup is written once and never overwritten because it is the user's only recovery path.** Nothing in this migration is restorable from within the UI — there is no restore command, and ADR-023's no-fallback rule applies to destructive rewrites. The `.bak` is the complete original, byte-for-byte, and the only way back.
+- **The re-stat guard is cheap insurance against a real race.** The read-to-rename window is sub-millisecond inside a synchronous method, but the cost of losing a live append is a silently truncated history; skipping the rewrite when the file changed costs nothing and re-runs next activation.
+
+**Known residual risk**: `writeSessionsFile` does no `fsync`. A process crash is covered — tmp + rename is atomic, so the file is either the old or the new content — but power loss can still lose the rewrite: the rename may be persisted before the data blocks, leaving a truncated `sessions.jsonl` after a power failure. This is accepted, not solved; it is the same exposure `deleteSession` and `updateSession` already carry, and the `.bak` is the recovery path if it ever bites.
+
+**Implementation**: `src/storage/sessionStore.ts` (`pruneShortSessions`, reusing `writeSessionsFile`), `src/extension.ts` (activation, before `manager.start()`, wrapped so a failed prune never breaks activation).
+
+**Test coverage**: `test/userStories/dataIntegrity.test.ts` — US-8.9 (raw-line removal with byte-identical survivors, the one-time `.bak` and its never-overwrite guarantee, idempotent second run, verbatim preservation of blank/malformed/unjudgeable lines, duplicated sub-floor ids, stray `.tmp` cleanup, missing-file no-op, nothing-to-prune no-rewrite, mid-prune concurrent append skipped, and activation running the prune silently before tracking starts and surviving a throwing prune).
 
 ---
 

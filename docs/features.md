@@ -254,6 +254,8 @@ Closed sessions are appended to `~/.lalog/sessions.jsonl`:
 
 A closed session is appended to `sessions.jsonl` only if it accumulated at least **30 seconds** of active time. A shorter session — an accidental start, a near-instant wrap, a session closed seconds after it began — is **silently discarded**: no row is written, and there is no prompt or setting for it. Because every close path runs through `SessionStore.close`, the rule holds however a session ends, including crash recovery; the active snapshot is removed either way, so a discarded session cannot reappear on the next startup.
 
+The rule is applied retroactively once. On the first activation after upgrading, a one-time backfill removes rows already in `sessions.jsonl` with under 30 seconds of active time — the "0m" rows recorded before the rule existed. It is silent, runs before tracking starts, and is idempotent: if nothing matches it rewrites nothing, and a crash simply re-runs it on the next start. Before the first rewrite it saves the complete original to `~/.lalog/sessions.jsonl.pre-prune-short.bak`; the backup is written only if absent and is never overwritten, and it is the only recovery path — nothing here is restorable from within the UI.
+
 ### Active Session Snapshots
 
 Active sessions are persisted as atomic JSON snapshots in `~/.lalog/active/<wsKey>.json`:

@@ -594,6 +594,20 @@ Acceptance criteria are the observable, testable conditions that make the story 
 - Given however the session ended (manual end, auto-idle close, shutdown, crash recovery), then the same rule applies.
 - Given a session of any length, then it is never silently *modified* — the only difference is recorded or not.
 
+### US-8.9 — Clear out the "0m" rows I already have
+
+**As a** developer, **I want** the too-short sessions already in my history removed, **so that** the rule applies to the sessions I recorded before it existed, not just the new ones.
+
+**Acceptance criteria**
+- Given rows in `sessions.jsonl` with less than 30 seconds of active time that were recorded before the rule shipped, then they are removed on the next launch — silently, with no prompt and no setting.
+- Given a row with 30 seconds or more, then it survives byte-identical: nothing is re-serialized, re-sorted, or otherwise rewritten.
+- Given the original history, then a one-time copy is kept at `sessions.jsonl.pre-prune-short.bak` before anything is rewritten, and it is never overwritten by a later run.
+- Given malformed lines and blank lines, then they are preserved verbatim.
+- Given one id appearing on two rows that are both under 30 seconds, then both rows go.
+- Given a history with nothing to remove, then the file is not rewritten at all.
+- Given another window of mine writing to the same data directory while the prune runs, then the prune is abandoned rather than losing that write.
+- Given the prune fails or finds nothing, then LaLog still starts normally.
+
 ---
 
 ## 9. Optional AI Assistance

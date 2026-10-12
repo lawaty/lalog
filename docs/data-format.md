@@ -25,6 +25,7 @@ All data is stored in `~/.lalog/` (configurable via `lalog.dataDir`):
 ```
 ~/.lalog/
 ├── sessions.jsonl              # All closed sessions (append-only)
+├── sessions.jsonl.pre-prune-short.bak  # One-time backup before the sub-30s backfill; written if absent, never overwritten
 ├── projects.json               # Curated project registry (rewritten atomically)
 ├── projects.json.pre-split.bak  # Written once if a collapsed single project was split per workspace
 ├── projects.json.pre-collapse.bak  # Legacy 0.6.0 backup; may coexist, never rewritten
@@ -121,6 +122,8 @@ interface SessionCommits {
 - **Append**: `appendLine(file, data)` — POSIX near-atomic (open, write, close)
 - **Read all**: `streamLines(file, onLine)` — streaming reader, skips malformed lines
 - **Update**: `updateSession(id, patch)` — rewrites the full file (rare, used by "Edit session" command)
+- **Delete**: `deleteSession(id)` — rewrites the full file, removing every raw line for the id; malformed lines and other sessions' lines are preserved verbatim; id not found → no write (ADR-023)
+- **Prune**: `pruneShortSessions()` — one-time backfill: rewrites the full file, dropping every raw line whose `activeMinutes` is under 30 s; malformed/blank lines preserved verbatim; nothing to remove → no write (ADR-036)
 
 ---
 
@@ -493,6 +496,16 @@ On every activation, LaLog sweeps `technical/` once:
 - The rewrite itself is atomic: the filtered content is written to `<file>.tmp` and `renameSync`'d over the original. A file whose size or mtime changed between the read and the rename is skipped (something appended to it mid-sweep), and a stray `.tmp` from an interrupted run is deleted at the start of the next sweep.
 
 A session whose diffs have aged out still shows its terminal commands and AI interactions in the session-detail document, with a note explaining that the diffs are outside the retention window.
+
+### One-Time Migration: Sub-30s Session Prune
+
+On the first activation after upgrading, LaLog prunes `sessions.jsonl` once, silently, before tracking starts:
+
+- Every line whose `activeMinutes` is a number below 30,000 ms (30 s) is removed — the "0m" rows recorded before the floor existed. Lines with 30 s or more survive byte-identical: nothing is re-serialized, re-sorted, or otherwise rewritten.
+- Malformed lines, blank lines, and lines whose `activeMinutes` is not a number are preserved verbatim. Both lines of a duplicated sub-30s id are removed.
+- The complete original is copied to `sessions.jsonl.pre-prune-short.bak` before the first rewrite; the backup is written only if absent and is never overwritten.
+- The rewrite is atomic: the filtered content is written to `sessions.jsonl.tmp` and `renameSync`'d over the original. A stray `.tmp` from an interrupted run is deleted at the start of the migration, and a file whose size or mtime changed between the read and the rename is skipped (another window appended to it mid-migration) — the same re-stat guard the technical sweep uses.
+- Idempotent: a history with nothing to remove is not rewritten at all, so a crash mid-migration simply re-runs and no-ops on the next activation. A failed migration never breaks activation.
 
 ### Redaction
 

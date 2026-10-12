@@ -710,6 +710,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     manager.setServeWatcher(serveWatcher);
   }
 
+  // One-time backfill for sessions recorded before the 30s "0m" floor existed
+  // (US-8.9): drop those rows from sessions.jsonl, keeping a .bak of the original.
+  // Placed BEFORE start(), which can recover a leftover snapshot and append to
+  // the file through close() — pruning first means never racing our own writes.
+  // Synchronous, cheap (one read, one rename, nothing at all when there is
+  // nothing to drop), and wrapped: a failed prune must never break activation,
+  // and it stays silent — no prompt, no notification (ADR-017 / ADR-019 / ADR-020).
+  try {
+    store.pruneShortSessions();
+  } catch (e) {
+    console.error('[lalog] short-session prune failed:', e);
+  }
+
   manager.start();
 
   // Per-workspace project (ADR-030). Every distinct workspace gets its own
