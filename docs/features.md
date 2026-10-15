@@ -40,7 +40,7 @@ A **session** represents a continuous engagement thread with a workspace. Sessio
 4. **Active tracking** — events accrue active time gap-based; each contiguous run is a span; confirmed-idle time extends a span classified as *outside VS Code*
 5. **Describe prompt** — after ~90 active minutes, prompt at natural breakpoint
 6. **Wrap prompt** — after ~3.5h active minutes, prompt to wrap or extend
-7. **Idle check** — after `idleConfirmAfterMinutes` (15) of no activity, "Are you still there?"; "Yes" keeps the span open (counted outside VS Code), "I was away and came back" trims the idle time since the prompt and keeps tracking, ending or ignoring stops/skips
+7. **Idle check** — after `idleConfirmAfterMinutes` (15) of no activity, "Are you still there?"; "Yes" keeps the span open (counted outside VS Code), "I was away and came back" trims the idle time since the prompt and keeps tracking, ending or ignoring stops/skips. The check is **suppressed while an opencode chat in this workspace is busy** — you are never asked whether you are present mid-turn (ADR-037). Suppression does not record anything: it does not count as activity and does not reset the 15-minute clock, so the check fires `idleConfirmAfterMinutes` after your *last real* activity once opencode goes quiet
 8. **End** — user ends manually, VS Code closes (`vscode-shutdown`), or auto-close after `staleSessionAfterMinutes` (default 60) idle — a stale session is closed as `auto-idle` and a fresh session starts immediately (no continue option)
 9. **Auto-restart** — any event that arrives with no open session (after a manual end or auto-idle close) silently starts a fresh session, so work is tracked even if every description/update prompt was skipped
 
@@ -541,27 +541,48 @@ The `lalog.exportFilesByDay` command generates a legacy export format compatible
 
 On by default and independent of `lalog.ai.enabled` — a chat keeps a session alive with AI off (US-7.2, ADR-032/ADR-033 → ADR-034). Turn it off with `"lalog.opencode.activity.enabled": false` for a fully local, zero-request install. When enabled, LaLog tracks your open opencode chats by reading **session metadata** from a local `opencode serve` — the read-only endpoint, which mutates nothing on the server.
 
-**It polls in two tiers, because that is where the cost is.** Listing every session costs the server ~164-283 ms of CPU and ~68 KB (it serializes all 100 sessions, summaries and costs included, and there is no ETag to turn it into a 304); asking for a single session costs ~48 ms and ~540 B. So:
+**It polls a cheap mix of three read-only endpoints, because that is where the cost is.** Listing every session costs the server ~164-283 ms of CPU and ~68 KB (it serializes all 100 sessions, summaries and costs included, and there is no ETag to turn it into a 304); asking for a single session costs ~48 ms and ~540 B. So:
 
 - **Activity poll — frequent and cheap.** Every `lalog.opencode.activity.pollIntervalSec` (default **30 s**) LaLog fetches `GET /session/{id}` for each session it already tracks and compares `time.updated`. A session whose `time.updated` is already older than one discovery window is skipped outright — an old chat cannot meaningfully move — which normally leaves this tier at one or two small requests. A tracked session that answers `404` is forgotten. Requests within a tick are strictly sequential, never a parallel fan-out.
 - **Discovery poll — rare and full.** Only every `lalog.opencode.activity.discoverySec` (default **180 s**, clamped to half of `lalog.idleConfirmAfterMinutes`), and once at start, LaLog lists `GET /session` — the only way to notice a **brand-new** chat, so this setting is the real detection latency for one. A newly seen session is adopted as a baseline and emits nothing until it moves.
+- **Status poll — one tiny request per tick, on both tiers.** At the end of every tick LaLog reads `GET /session/status`, a flat map of session id → status object in which **only non-idle sessions appear as a key** (`{"ses_abc":{"type":"busy"}}`; a session the server considers idle is simply absent). Subagent sessions appear too. It is one request regardless of how many chats are tracked, and it is what tells LaLog that opencode is mid-turn — see [While opencode is busy](#while-opencode-is-busy) below. A serve that answers `404` here simply has no busy signal: observation carries on without one, because an opencode without the endpoint must not cost you the rest of the polling.
 
-Both tiers run *nothing* when no LaLog session is open.
+All three run *nothing* when no LaLog session is open.
 
 **You do not have to start it.** With `manageServe` on (the default), the watcher looks for a serve already serving this workspace and reuses it; only if there is none does it start one for you, in the workspace root, on `127.0.0.1`, with a random password, and stop it again when it is no longer needed (ADR-033).
 
-It emits **at most one `opencode` activity event per poll**, and only when a session it has *already observed*, whose `directory` is inside the current workspace, has a newer `time.updated`. It counts like any other activity: idle confirmation, accrual and the stale cutoff behave exactly as they do for terminal work, and the new `opencode` counter shows up in session detail, reports and the panel.
+It emits **at most one `opencode` activity event per poll**, and only when a session it has *already observed*, whose `directory` is inside the current workspace, has a newer `time.updated`. It counts like any other activity: accrual and the stale cutoff behave exactly as they do for terminal work, and the new `opencode` counter shows up in session detail, reports and the panel. (Idle confirmation is the one place where opencode reaches beyond an event, and it does so without emitting one — see below.)
+
+#### While opencode is busy
+
+`time.updated` is a poor heartbeat. It does not move during a long single tool call or a long model stream — which is precisely the window in which you are least likely to be at the keyboard, and precisely the window in which "Are you still there?" was firing at someone demonstrably working. opencode publishes the real answer itself, so LaLog reads it.
+
+When any **already-tracked** session (workspace-root-matched) appears in the status map, the watcher records a **busy window**: an absolute expiry `now + max(current poll delay, 2 min)`, re-armed on every tick that sees busy work and never extended by anything else. `SessionManager`'s idle check then suppresses the "Are you still there?" prompt for as long as that window is open.
+
+The window's two-minute floor exists because LaLog's heartbeat runs every 60 s while the opencode poll may be slower; without a floor, the heartbeat could observe a window that had already expired between two polls, and the prompt would fire anyway.
+
+What the window is **not**:
+
+- **It is not activity.** Suppressing the prompt records nothing — no `opencode` event, no movement of the last-activity clock, no re-arming of the idle timer. A busy opencode session is work in flight, not a recorded event, and a report must not show it as one. The one-event-per-poll rule above is unchanged by any of this.
+- **Consequently, the clock keeps running underneath it.** When opencode goes quiet, the idle check resumes from your last *real* activity — so the stretch you spent in a chat still ends in a prompt, and answering "Yes, still working" still bills it as active time outside VS Code. The window buys you silence during the work, not a deletion of the time.
+
+Four further consequences worth knowing:
+
+- **Busy holds the poll on its fast cadence.** Seeing a busy session joins a `time.updated` bump or a newly seen session in resetting the backoff, so real opencode work never backs off to the ~5-minute slow poll.
+- **A busy session counts even when its `time.updated` is stale.** The busy check intersects the status map with the tracked set and is deliberately *not* re-filtered by the freshness cutoff above — a chat mid-tool-call looks stale by definition, and that is exactly the case this exists for.
+- **A failure clears the window.** A failed poll, a serve that could not be found or started, and shutdown all clear it. A busy window with no watcher data behind it must never suppress the prompt. A status read that degrades — a `404` from an opencode without the endpoint, or a dead socket — is simply read as "nothing busy": it never stops observation, never re-baselines, and the probe is retried on the next tick. A `401`/`403` or a body that is not JSON is a real misconfiguration, and stops the watcher with a single warning exactly as a failure on either other endpoint does (ADR-032) — swallowed, it would masquerade as "nothing is busy" and quietly bring the idle prompt back mid-turn.
+- **There is no setting for it.** The behaviour is unconditional, the same way the 30-second session floor ships with no setting.
 
 - **Reuse first** — a serve you already run is found and adopted, never restarted or reconfigured
 - **Only what LaLog started is ever stopped** — a serve it did not start cannot be signalled at all
 - **Nothing runs when nothing is being tracked** — with no open session the watcher keeps no timer and sends no requests
-- **Small requests, often; the expensive list, rarely** — the 30 s cadence asks for the sessions it tracks, and the full list only every `discoverySec`
-- **Polling adapts** — at the fast cadence while sessions are alive, backing off up to ~5 min when quiet, and snapping back the moment something moves
+- **Small requests, often; the expensive list, rarely** — the 30 s cadence asks for the sessions it tracks and for the one status map, and the full list only every `discoverySec`
+- **Polling adapts** — at the fast cadence while sessions are alive, backing off up to ~5 min when quiet, and snapping back the moment something moves, appears, or goes busy
 - **First sight is a baseline, never an event** — a session appearing on a poll is remembered and emits nothing
 - **Failures retry silently** — after an outage or a failed start the watcher re-baselines (with a fresh list) and retries quietly, so time is never counted for a period it did not observe
 - **LaLog's own runs are ignored** — sessions titled `LaLog …` are its one-shot AI bridge, not your work
 
-**Privacy contract**: loopback only (`127.0.0.1`), metadata only (`id`, `directory`, `title`, `time.updated` — never message content), never prompts, and one setting turns the whole thing off. LaLog runs no server of its own; with `manageServe` on it reuses a serve you already run, and only starts one on loopback in the workspace root when there is none to reuse — a random password for that serve is kept in memory only, and `authUser`/`authPassword` stay in VS Code settings, sent as HTTP Basic only when a password is set.
+**Privacy contract**: loopback only (`127.0.0.1`), metadata only — from `GET /session` and `GET /session/{id}`, the fields `id`, `directory`, `title` and `time.updated`, and from `GET /session/status`, session ids paired with a bare status object (`{"type":"busy"}`) — never message content, never prompts, and one setting turns the whole thing off. The status map can name sessions from other workspaces; only the ids LaLog already tracks in this workspace are used, and nothing is stored from it. LaLog runs no server of its own; with `manageServe` on it reuses a serve you already run, and only starts one on loopback in the workspace root when there is none to reuse — a random password for that serve is kept in memory only, and `authUser`/`authPassword` stay in VS Code settings, sent as HTTP Basic only when a password is set.
 
 Settings: `lalog.opencode.activity.enabled`, `.manageServe`, `.url`, `.pollIntervalSec`, `.discoverySec`, `.authUser`, `.authPassword`, `.spawnPort`, `.opencodePath` — see [Configuration](#configuration).
 

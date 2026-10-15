@@ -561,3 +561,84 @@ test('US-1.4 · isStale boundary: null, exactly-at, just-under, past', () => {
   assert.equal(isStale(1000 - 60 * MIN + 1, 1000, 60 * MIN), false);
   assert.equal(isStale(1000 - 60 * MIN - 1, 1000, 60 * MIN), true);
 });
+
+test('US-1.3 · checkIdle suppresses prompt while opencode is busy', async (t) => {
+  const h = setupHarness(t, { config: { idleConfirmAfterMinutes: 15 } });
+  const watcher = {
+    start: () => {},
+    dispose: () => {},
+    busyUntil: () => Date.now() + 60000, // Busy for 1 minute
+  };
+  h.manager.setServeWatcher(watcher);
+  await h.start();
+  await h.edit(); // lastActivityAt = BASE_TIME
+
+  // Trigger idle condition:
+  // now > lastActivityAt + th.idleConfirm
+  await h.tick(20 * 60000); // 20 mins > 15 mins
+  await h.flush();
+
+  assert.equal(mockVscode.promptCalls().length, 0, 'idle prompt suppressed while busy');
+});
+
+test('US-1.3 · checkIdle prompts once busy period passes', async (t) => {
+  const h = setupHarness(t, { config: { idleConfirmAfterMinutes: 15 } });
+  // Busy *now*, for one minute — recomputed on every call, so the window keeps
+  // ahead of the clock the harness ticks. A value captured once at BASE time
+  // would already be 19 minutes stale by the first assertion below.
+  let busy = true;
+  const watcher = {
+    start: () => {},
+    dispose: () => {},
+    busyUntil: () => (busy ? Date.now() + 60000 : 0),
+  };
+  h.manager.setServeWatcher(watcher);
+  await h.start();
+  await h.edit();
+
+  // Tick past 15 min, but still busy
+  await h.tick(20 * 60000);
+  await h.flush();
+  assert.equal(mockVscode.promptCalls().length, 0, 'suppressed');
+
+  // Busy period expires
+  busy = false;
+  await h.tick(60000); // next heartbeat
+  await h.flush();
+
+  assert.ok(
+    mockVscode.promptCalls().some((c) => c.kind === 'quickPick' && c.title?.includes('Are you still there')),
+    'idle prompt shown once no longer busy'
+  );
+});
+
+test('US-1.3 · guard leaves tracked state unchanged when busy', async (t) => {
+  const h = setupHarness(t, { config: { idleConfirmAfterMinutes: 15 } });
+  const watcher = {
+    start: () => {},
+    dispose: () => {},
+    busyUntil: () => Date.now() + 60000,
+  };
+  h.manager.setServeWatcher(watcher);
+  await h.start();
+  await h.edit();
+  const s = h.manager.getSession()!;
+  const beforeActivity = s.lastActivityAt;
+  const beforeArmAt = (h.manager as any).lastIdleArmAt;
+
+  await h.tick(20 * 60000);
+  await h.flush();
+
+  assert.equal(s.lastActivityAt, beforeActivity, 'lastActivityAt unchanged');
+  assert.equal((h.manager as any).lastIdleArmAt, beforeArmAt, 'lastIdleArmAt unchanged');
+});
+
+test('US-1.3 · no crash when watcher is absent', async (t) => {
+  const h = setupHarness(t, { config: { idleConfirmAfterMinutes: 15 } });
+  await h.start();
+  await h.edit();
+  await h.tick(20 * 60000);
+  await h.flush();
+  // If it crashes, the test fails
+  assert.ok(mockVscode.promptCalls().length > 0, 'idle prompt shown');
+});

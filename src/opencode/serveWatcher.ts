@@ -65,6 +65,11 @@ const MAX_BACKOFF_MS = 60_000;
 /** Per-request timeout. A hung server must not hold the poll chain. */
 const REQUEST_TIMEOUT_MS = 5000;
 /**
+ * Minimum window for a busy signal. Must exceed the 60-second LaLog heartbeat
+ * so the heartbeat can never observe an already-expired window.
+ */
+const BUSY_MIN_WINDOW_MS = 2 * 60 * 1000;
+/**
  * Ceiling for the adaptive (quiet) cadence. The `idleConfirm / 3` clamp in
  * `opencodePollMs` bounds the **fast** end only — re-applying it here would
  * collapse the backoff to a constant under `debugTimeScale` and buy nothing,
@@ -160,6 +165,9 @@ interface ServeSession {
   title?: string;
 }
 
+/** Map of session ID to status, as returned by `GET /session/status`. */
+type SessionStatusMap = Record<string, { type?: string } | object>;
+
 /** Per-session observation state, kept across polls — the whole footprint. */
 interface Observation {
   directory: string;
@@ -214,6 +222,7 @@ export class ServeWatcher implements ServeActivityWatcher {
   private ensureBusy = false;
   private ensureFailures = 0;
   private ensureNotBefore = 0;
+  private busyUntilTime = 0;
 
   constructor(private opts: ServeWatcherOptions) {
     this.roots = opts.roots.map(normalizeFsPath).filter((r) => r.length > 0);
@@ -255,6 +264,11 @@ export class ServeWatcher implements ServeActivityWatcher {
     return [...this.seen.keys()];
   }
 
+  /** Epoch ms until which the serve is considered busy. */
+  busyUntil(): number {
+    return this.busyUntilTime;
+  }
+
   /** Stop polling for good: clear the timer, forget observations, release the serve. */
   dispose(): void {
     this.disposed = true;
@@ -265,6 +279,7 @@ export class ServeWatcher implements ServeActivityWatcher {
     }
     this.seen.clear();
     this.failures = 0;
+    this.busyUntilTime = 0;
     this.releaseOwned();
   }
 
@@ -320,6 +335,7 @@ export class ServeWatcher implements ServeActivityWatcher {
           // (baseline dropped, silent, retried with backoff) — never guessed at.
           this.seen.clear();
           this.discoveryDueAt = 0;
+          this.busyUntilTime = 0;
           this.failures += 1;
           return;
         }
@@ -333,6 +349,7 @@ export class ServeWatcher implements ServeActivityWatcher {
       // re-run discovery next tick — a re-baseline needs the list.
       this.seen.clear();
       this.discoveryDueAt = 0;
+      this.busyUntilTime = 0;
       this.failures += 1;
       if (e instanceof ServeStop) {
         this.stopped = true;
@@ -407,9 +424,29 @@ export class ServeWatcher implements ServeActivityWatcher {
     }
 
     this.seen = seen;
+    // A serve that answers /session but not /session/status — an opencode without
+    // the endpoint — simply has no busy signal, and degrades quietly. An auth or
+    // shape failure is a real misconfiguration and stops the watcher exactly as a
+    // failure on either other endpoint does (ADR-032): swallowed, it would
+    // masquerade as "nothing is busy" and silently bring the idle prompt back.
+    const status = await this.fetchSessionStatus().catch((e) => {
+      if (e instanceof ServeStop) throw e;
+      return {};
+    });
+    let isBusy = false;
+    for (const id of Object.keys(status)) {
+      if (this.seen.has(id)) {
+        isBusy = true;
+        break;
+      }
+    }
+    if (isBusy) {
+      this.busyUntilTime = now + Math.max(this.nextDelayMs(), BUSY_MIN_WINDOW_MS);
+    }
+
     // Either signal means "there is life here": back to the fast cadence. A new
     // session still emits nothing — first sight is a baseline, never an event.
-    this.quietStreak = bumped || opened ? 0 : this.quietStreak + 1;
+    this.quietStreak = bumped || opened || isBusy ? 0 : this.quietStreak + 1;
     if (bumped) this.opts.onActivity(now);
   }
 
@@ -552,6 +589,12 @@ export class ServeWatcher implements ServeActivityWatcher {
     return session ? { kind: 'ok', session } : { kind: 'skipped' };
   }
 
+  /** GET /session/status: map of ID -> status object. */
+  private async fetchSessionStatus(): Promise<SessionStatusMap> {
+    const body = await this.fetchJson('/session/status');
+    return parseSessionStatus(body);
+  }
+
   /**
    * One authenticated GET with a bounded timeout, parsed as JSON. 401/403 and a
    * non-JSON body are unrecoverable (`ServeStop`); everything else — 5xx, a
@@ -613,6 +656,17 @@ export function parseSessions(body: unknown): ServeSession[] {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
     const session = sessionFields(raw as Record<string, unknown>);
     if (session) out.push(session);
+  }
+  return out;
+}
+
+/** Validate the status map shape. Non-object bodies are skipped. */
+export function parseSessionStatus(body: unknown): SessionStatusMap {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return {};
+  const out: SessionStatusMap = {};
+  for (const [id, status] of Object.entries(body as Record<string, unknown>)) {
+    if (typeof id !== 'string' || !status || typeof status !== 'object' || Array.isArray(status)) continue;
+    out[id] = status as { type?: string } | object;
   }
   return out;
 }

@@ -449,6 +449,12 @@ export class SessionManager implements vscode.Disposable {
       return;
     }
     if (m.lastActivityAt === null) return;
+    // opencode sessions mid-turn are work in flight, so the session is not idle —
+    // but that is not a recorded activity, and must not become one. Deliberately
+    // leaves lastActivityAt and lastIdleArmAt alone: no tracked event, nothing
+    // re-armed, so when opencode goes quiet the normal timer resumes and this
+    // stretch is classified like any other.
+    if (this.serveWatcher && this.serveWatcher.busyUntil() > now) return;
     if (now - m.lastActivityAt < this.th.idleConfirm) return;
     if (now < this.lastIdleArmAt) return;
     this.idlePromptOpen = true;

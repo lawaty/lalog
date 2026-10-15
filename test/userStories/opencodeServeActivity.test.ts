@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { ServeWatcher } from '../../src/opencode/serveWatcher';
+import { ServeWatcher, parseSessionStatus } from '../../src/opencode/serveWatcher';
 import type { ServeLifecycle } from '../../src/opencode/serveWatcher';
 import type { DiscoveredServe, ExitInfo, OwnedServe, SpawnOptions } from '../../src/opencode/serveProcess';
 import { opencodePollMs, opencodeSlowPollMs, opencodeDiscoveryMs, thresholdsMs, readOpencodeActivityConfig } from '../../src/core/config';
@@ -60,6 +60,14 @@ function singleSessionId(url: string): string | null {
 }
 
 /**
+ * The status endpoint answers a map, never a session — so it is matched ahead
+ * of `singleSessionId`, which would otherwise read `status` as an id.
+ */
+function isStatusUrl(url: string): boolean {
+  return /\/session\/status$/.test(url);
+}
+
+/**
  * Injected fetch: never touches the network, just replays scripted replies.
  * `reply(call)` is consulted per request, so the script keeps counting requests
  * in order — which is also what the request-mix tests assert on.
@@ -67,15 +75,49 @@ function singleSessionId(url: string): string | null {
  * The URL decides the payload shape, exactly as the real server does: `/session`
  * answers the whole scripted list, `/session/{id}` answers the one entry with
  * that id, and 404 when the script no longer has it (a deleted session).
+ *
+ * **`/session/status` is deliberately answered out of band, from `statusReply`,
+ * and never touches the script or `urls`.** It is the odd one out on purpose:
+ * `/session` and `/session/{id}` are the subject of the request-mix assertions
+ * and their scripts are keyed on the *request index*, so counting one extra
+ * probe per tick inside `urls` would silently shift every scripted reply by one
+ * from the second tick onwards — a cascade of confusing failures whose real
+ * cause is one added line. Isolating it keeps `calls()` meaning exactly what it
+ * has always meant for the existing tests ("requests the script answers"), and
+ * the probe stays assertable on its own in `statusUrls`. This is an isolation,
+ * not an oversight.
+ *
+ * It is scripted in the same `FakeReply` vocabulary as every other endpoint,
+ * deliberately: the endpoint has two failure contracts — a `404` degrades, an
+ * auth failure or a malformed body stops the watcher — and neither is reachable
+ * from a hook that can only return a body.
  */
-function fakeFetch(reply: (call: number) => FakeReply): {
+function fakeFetch(
+  reply: (call: number) => FakeReply,
+  statusReply?: () => FakeReply
+): {
   fetchImpl: typeof fetch;
   urls: string[];
+  statusUrls: string[];
   calls: () => number;
 } {
   const urls: string[] = [];
+  const statusUrls: string[] = [];
   const impl = async (url: string) => {
     const target = String(url);
+    // Before `reply(urls.length)`: the probe consumes no script index and
+    // lands in no script-visible list.
+    if (isStatusUrl(target)) {
+      statusUrls.push(target);
+      const s = statusReply ? statusReply() : { body: {} };
+      if (s.error) throw s.error;
+      const code = s.status ?? 200;
+      return {
+        ok: code >= 200 && code < 300,
+        status: code,
+        json: async () => s.body,
+      };
+    }
     const id = singleSessionId(target);
     const r = reply(urls.length);
     urls.push(target);
@@ -92,7 +134,12 @@ function fakeFetch(reply: (call: number) => FakeReply): {
     }
     return { ok, status, json: async () => r.body };
   };
-  return { fetchImpl: impl as unknown as typeof fetch, urls, calls: () => urls.length };
+  return {
+    fetchImpl: impl as unknown as typeof fetch,
+    urls,
+    statusUrls,
+    calls: () => urls.length,
+  };
 }
 
 interface WatcherHarness {
@@ -101,6 +148,7 @@ interface WatcherHarness {
   warnings: string[];
   calls: () => number;
   urls: string[];
+  statusUrls: string[];
 }
 
 interface WatcherExtras {
@@ -113,13 +161,15 @@ interface WatcherExtras {
   opencodePath?: string;
   spawnPort?: number;
   lifecycle?: ServeLifecycle;
+  /** Reply for the `GET /session/status` probe; `{}` (nothing busy) by default. */
+  statusReply?: () => FakeReply;
 }
 
 function makeWatcher(
   reply: (call: number) => FakeReply,
   opts: WatcherExtras = {}
 ): WatcherHarness {
-  const fake = fakeFetch(reply);
+  const fake = fakeFetch(reply, opts.statusReply);
   const events: number[] = [];
   const warnings: string[] = [];
   const w = new ServeWatcher({
@@ -137,7 +187,14 @@ function makeWatcher(
     log: (m) => warnings.push(m),
     fetchImpl: fake.fetchImpl,
   });
-  return { w, events, warnings, calls: fake.calls, urls: fake.urls };
+  return {
+    w,
+    events,
+    warnings,
+    calls: fake.calls,
+    urls: fake.urls,
+    statusUrls: fake.statusUrls,
+  };
 }
 
 /**
@@ -203,9 +260,84 @@ function enableTimers(t: TestContext): void {
   t.after(() => t.mock.timers.reset());
 }
 
-// ---------------------------------------------------------------------------
-// US-7.2 · the watcher reports only what it observed
-// ---------------------------------------------------------------------------
+test('US-7.2 · status response parsing', () => {
+  assert.deepEqual(parseSessionStatus({}), {});
+  assert.deepEqual(parseSessionStatus('not-an-object'), {});
+  assert.deepEqual(parseSessionStatus(null), {});
+  assert.deepEqual(
+    parseSessionStatus({
+      s1: { type: 'busy' },
+      s2: {},
+      s3: 'invalid', // should be ignored (status should be object)
+      s4: { type: 'idle' },
+    }),
+    { s1: { type: 'busy' }, s2: {}, s4: { type: 'idle' } }
+  );
+});
+
+test('US-7.2 · busyUntil() is re-armed when a tracked session is busy', async (t) => {
+  enableTimers(t);
+  let busy = false;
+  const { w, statusUrls } = makeWatcher(
+    () => ({ body: [entry('s1', ROOT, RECENT)] }),
+    { statusReply: () => (busy ? { body: { s1: { type: 'busy' } } } : {}) }
+  );
+  w.start();
+  await step(t, 0); // baseline
+  assert.equal(statusUrls.length, 1, 'the status probe is polled on every tick');
+  assert.equal(w.busyUntil(), 0);
+  busy = true;
+  await step(t); // busy poll
+  assert.ok(w.busyUntil() > 0, 'busyUntil should be set');
+  w.dispose();
+});
+
+test('US-7.2 · busyUntil() is NOT re-armed when only untracked sessions are busy', async (t) => {
+  enableTimers(t);
+  const { w, statusUrls } = makeWatcher(
+    () => ({ body: [entry('s1', ROOT, RECENT)] }),
+    // Only 'other' is busy, 's1' is not.
+    { statusReply: () => ({ body: { other: { type: 'busy' } } }) }
+  );
+  w.start();
+  await step(t, 0); // baseline
+  assert.equal(statusUrls.length, 1, 'the probe ran, and reported an untracked session');
+  assert.equal(w.busyUntil(), 0);
+  await step(t); // busy poll
+  assert.equal(w.busyUntil(), 0, 'busyUntil should NOT be set for untracked session');
+  w.dispose();
+});
+
+test('US-7.2 · busyUntil() returns 0 after dispose', async (t) => {
+  enableTimers(t);
+  const { w } = makeWatcher(() => ({ body: [entry('s1', ROOT, RECENT)] }), {
+    statusReply: () => ({ body: { s1: { type: 'busy' } } }),
+  });
+  w.start();
+  await step(t, 0); // baseline
+  await step(t); // busy poll
+  assert.ok(w.busyUntil() > 0);
+  w.dispose();
+  assert.equal(w.busyUntil(), 0);
+});
+
+test('US-7.2 · a busy session whose updated is older than discovery cutoff STILL re-arms', async (t) => {
+  enableTimers(t);
+  const old = RECENT - 10 * 60_000;
+  let probes = 0;
+  const { w } = makeWatcher(
+    () => ({ body: [entry('s1', ROOT, old)] }),
+    // Quiet on the baseline tick, busy on the next: the point is that busy is
+    // observed even though `time.updated` is too old to be re-fetched.
+    { statusReply: () => (probes++ > 0 ? { body: { s1: { type: 'busy' } } } : {}) }
+  );
+  w.start();
+  await step(t, 0); // baseline
+  assert.equal(w.busyUntil(), 0);
+  await step(t); // busy poll
+  assert.ok(w.busyUntil() > 0, 'should re-arm even if updated is old');
+  w.dispose();
+});
 
 test('US-7.2 · first poll is a baseline: a session seen for the first time emits nothing', async (t) => {
   enableTimers(t);
@@ -464,6 +596,98 @@ test('US-7.2 · a 5xx is transient: silent retry, no warning', async (t) => {
   w.dispose();
 });
 
+// ---------------------------------------------------------------------------
+// US-7.2 · the status probe's own failure handling: two failure classes, and
+// they are not the same. A 404 (or a dead socket) means an opencode without
+// the endpoint, which simply has no busy signal; a 401/403 or a malformed body
+// is a misconfiguration that stops the watcher, exactly as on the other two
+// endpoints. Swallowing the second would masquerade as "nothing is busy" and
+// silently bring the idle prompt back mid-turn (ADR-037 decision 8).
+// ---------------------------------------------------------------------------
+
+test('US-7.2 · a 401/403 on /session/status stops the watcher with exactly one warning', async (t) => {
+  enableTimers(t);
+  for (const status of [401, 403]) {
+    let healthy = false;
+    // `/session` answers normally throughout: the status map alone is
+    // unreadable, which is precisely the case where swallowing it would be
+    // indistinguishable from "opencode is idle".
+    const { w, warnings, calls } = makeWatcher(
+      () => ({ body: [entry('s1', ROOT, RECENT)] }),
+      { statusReply: () => (healthy ? { body: {} } : { status }) }
+    );
+    w.start();
+    await step(t, 0);
+    await step(t);
+    await step(t);
+    assert.equal(warnings.length, 1, `exactly one warning for ${status}`);
+    assert.match(warnings[0], /session\/status/, 'the warning names the endpoint that failed');
+    assert.match(warnings[0], new RegExp(String(status)));
+    assert.equal(calls(), 1, `no retry storm after ${status} on the status map`);
+    healthy = true;
+    w.start(); // a config change re-arms it
+    await step(t, 0);
+    assert.equal(calls(), 2, 'start() recovers');
+    assert.equal(warnings.length, 1, 'a readable status map after recovery warns nothing');
+    w.dispose();
+  }
+});
+
+test('US-7.2 · a 404 on /session/status degrades: no busy signal, observation continues', async (t) => {
+  enableTimers(t);
+  // An opencode that answers /session but not /session/status — the endpoint
+  // simply does not exist there. An older opencode must not cost the user the
+  // whole observation loop, so this degrades instead of stopping.
+  const { w, events, warnings, calls, statusUrls } = makeWatcher(
+    (call) => ({ body: [entry('s1', ROOT, call === 0 ? RECENT : BUMPED)] }),
+    { slowMs: POLL_MS, statusReply: () => ({ status: 404 }) }
+  );
+  w.start();
+  await step(t, 0); // baseline
+  assert.equal(statusUrls.length, 1, 'the probe ran');
+  assert.equal(w.busyUntil(), 0, 'no busy signal from an endpoint that does not exist');
+  assert.deepEqual(warnings, [], 'a missing endpoint is not a warning');
+  await step(t); // a `time.updated` bump is still observed
+  assert.equal(events.length, 1, 'observation continues');
+  assert.equal(w.busyUntil(), 0);
+  await step(t);
+  await step(t);
+  assert.equal(statusUrls.length, 4, 'the probe keeps running; nothing was given up on');
+  assert.equal(w.armed, true, 'the watcher is still polling');
+  assert.equal(calls(), 4, 'and the session is still sampled');
+  assert.deepEqual(w.retainedSessionIds(), ['s1'], 'the baseline survives: no re-baseline');
+  assert.deepEqual(warnings, [], 'still silent');
+  w.dispose();
+});
+
+test('US-7.2 · a transport failure on /session/status degrades rather than stopping', async (t) => {
+  enableTimers(t);
+  // A timed-out or reset socket is the same class as the 404 above: no busy
+  // signal this tick, and the next one may well succeed.
+  const { w, events, warnings, calls, statusUrls } = makeWatcher(
+    (call) => ({ body: [entry('s1', ROOT, call === 0 ? RECENT : BUMPED)] }),
+    {
+      slowMs: POLL_MS,
+      statusReply: () => ({
+        error: Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' }),
+      }),
+    }
+  );
+  w.start();
+  await step(t, 0); // baseline
+  assert.equal(w.busyUntil(), 0, 'a failed probe reports nothing busy');
+  await step(t); // a `time.updated` bump is still observed
+  assert.equal(events.length, 1, 'observation continues');
+  await step(t);
+  await step(t);
+  assert.equal(statusUrls.length, 4, 'the probe keeps running');
+  assert.equal(w.armed, true, 'the watcher is still polling');
+  assert.deepEqual(w.retainedSessionIds(), ['s1'], 'the baseline survives: no re-baseline');
+  assert.ok(calls() >= 4, `kept polling (${calls()} requests)`);
+  assert.deepEqual(warnings, [], 'a transient transport error is never surfaced');
+  w.dispose();
+});
+
 test('US-7.2 · dispose() clears the timer and the watcher never polls again', async (t) => {
   enableTimers(t);
   const { w, calls } = makeWatcher(() => ({ body: [] }));
@@ -603,6 +827,7 @@ test('US-7.2 · opencode bumps accrue like any other activity, and are counted',
     dispose(): void {
       this.disposed += 1;
     },
+    busyUntil: () => 0,
   };
   h.manager.setServeWatcher(stub);
   await h.start();
@@ -677,6 +902,7 @@ test('US-7.2 · the manager starts and disposes the injected watcher', async (t)
     dispose(): void {
       this.disposed += 1;
     },
+    busyUntil: () => 0,
   };
   h.manager.setServeWatcher(stub);
   await h.start();
@@ -809,6 +1035,7 @@ test('US-7.2 · a discovered serve is observed and nothing is ever spawned for i
   const life = fakeLifecycle({ discovered });
   const fake = fakeFetch(() => ({ body: [] }));
   const urls: string[] = [];
+  const statusUrls: string[] = [];
   void fake;
   const w = new ServeWatcher({
     url: 'http://127.0.0.1:4096',
@@ -819,7 +1046,10 @@ test('US-7.2 · a discovered serve is observed and nothing is ever spawned for i
     onActivity: () => {},
     log: () => {},
     fetchImpl: ((url: string) => {
-      urls.push(String(url));
+      // Kept apart from `urls` for the same reason the harness does it: this
+      // assertion is about which endpoints the discovered server was asked for.
+      const target = String(url);
+      (isStatusUrl(target) ? statusUrls : urls).push(target);
       return Promise.resolve({ ok: true, status: 200, json: async () => [] });
     }) as unknown as typeof fetch,
   });
@@ -829,6 +1059,7 @@ test('US-7.2 · a discovered serve is observed and nothing is ever spawned for i
   assert.equal(life.spawns.length, 0, 'reuse first: nothing spawned');
   assert.equal(life.stops.length, 0);
   assert.deepEqual(urls, ['http://127.0.0.1:4321/session'], 'the discovered server is the one polled');
+  assert.deepEqual(statusUrls, ['http://127.0.0.1:4321/session/status'], 'against the same server');
   await step(t, POLL_MS);
   assert.equal(life.discoverCalls.length, 1, 'the endpoint is reused, not rediscovered every poll');
   w.dispose();
@@ -839,6 +1070,7 @@ test('US-7.2 · when discovery finds nothing, LaLog starts its own serve', async
   enableTimers(t);
   const life = fakeLifecycle({ url: 'http://127.0.0.1:5566', authPassword: 'random-secret' });
   const urls: string[] = [];
+  const statusUrls: string[] = [];
   const w = new ServeWatcher({
     url: 'http://127.0.0.1:4096',
     pollMs: POLL_MS,
@@ -852,7 +1084,9 @@ test('US-7.2 · when discovery finds nothing, LaLog starts its own serve', async
     onActivity: () => {},
     log: () => {},
     fetchImpl: ((url: string, init: RequestInit) => {
-      urls.push(String(url));
+      // The status probe is recorded apart from `urls`, as in `fakeFetch`.
+      const target = String(url);
+      (isStatusUrl(target) ? statusUrls : urls).push(target);
       const headers = (init.headers ?? {}) as Record<string, string>;
       return Promise.resolve({ ok: true, status: 200, json: async () => [] });
     }) as unknown as typeof fetch,
@@ -867,6 +1101,7 @@ test('US-7.2 · when discovery finds nothing, LaLog starts its own serve', async
   assert.equal(spawn.port, 0, '0 = let opencode choose, so there is no port collision');
   assert.equal(spawn.authPassword, undefined, 'unset ⇒ spawnServe generates a password');
   assert.deepEqual(urls, ['http://127.0.0.1:5566/session'], 'the serve we started is the one polled');
+  assert.deepEqual(statusUrls, ['http://127.0.0.1:5566/session/status'], 'and it answered the status probe');
   assert.equal(life.stops.length, 0);
   w.dispose();
   assert.equal(life.stops.length, 1, 'dispose() stops exactly the serve we started');
@@ -1099,7 +1334,7 @@ test('US-7.2 · the adaptive ceiling is a scaled time gate like every other', ()
 
 test('US-7.2 · the request mix: per-session every tick, the full list only every discoverySec', async (t) => {
   enableTimers(t);
-  const { w, urls } = makeWatcher(
+  const { w, urls, statusUrls } = makeWatcher(
     () => ({ body: [entry('s1', ROOT, RECENT), entry('s2', `${ROOT}/api`, RECENT)] }),
     { pollMs: POLL_MS, slowMs: POLL_MS, discoveryMs: 5000 }
   );
@@ -1114,6 +1349,13 @@ test('US-7.2 · the request mix: per-session every tick, the full list only ever
   );
   assert.equal(perSession.length, 8, 'the four ticks in between ask for the two tracked sessions');
   assert.equal(urls.length, lists.length + perSession.length, 'nothing else was ever requested');
+  // The status probe is the one request kept out of `urls` (see `fakeFetch`),
+  // so it is accounted for here: exactly one per tick, and nothing else.
+  assert.deepEqual(
+    statusUrls,
+    new Array(6).fill('http://127.0.0.1:4096/session/status'),
+    'and the cheap status map is polled once on each of the six ticks'
+  );
   w.dispose();
 });
 
@@ -1198,7 +1440,9 @@ test('US-7.2 · a tick issues its requests one at a time, never a parallel fan-o
   const urls: string[] = [];
   let open = 0;
   let maxOpen = 0;
-  // Three workspace sessions: one discovery list plus three per-session polls.
+  // Three workspace sessions: the discovery tick costs the list and the status
+  // map, the activity tick three per-session polls and the status map again —
+  // six requests in all, and every one of them alone in flight.
   const list = [entry('a', ROOT, RECENT), entry('b', ROOT, RECENT), entry('c', ROOT, RECENT)];
   const impl = (async (url: string) => {
     const target = String(url);
@@ -1207,6 +1451,7 @@ test('US-7.2 · a tick issues its requests one at a time, never a parallel fan-o
     urls.push(target);
     await flush(); // any sibling request would start inside this window
     open -= 1;
+    if (isStatusUrl(target)) return { ok: true, status: 200, json: async () => ({}) };
     const id = singleSessionId(target);
     const one = list.find((e) => (e as { id: string }).id === id);
     return { ok: true, status: 200, json: async () => (id ? one : list) };
@@ -1221,14 +1466,21 @@ test('US-7.2 · a tick issues its requests one at a time, never a parallel fan-o
   });
   w.start();
   await step(t, 0);
-  await step(t, POLL_MS); // the activity tick: three sessions, three requests
-  await waitFor(() => urls.length === 4);
+  // Tick 1 (the discovery list, then the status map) arms its timer only once
+  // that chain has settled, and the clock can outrun it — so the activity tick
+  // may land one or two intervals later than exactly POLL_MS. It cannot be
+  // missed though: each interval is a real `step`, and the deepEqual below
+  // pins the order and the count.
+  for (let i = 0; i < 4 && urls.length < 6; i++) await step(t, POLL_MS);
+  await waitFor(() => urls.length === 6);
   assert.equal(maxOpen, 1, 'never two requests in flight at once on an already-busy server');
   assert.deepEqual(urls, [
     'http://127.0.0.1:4096/session',
+    'http://127.0.0.1:4096/session/status',
     'http://127.0.0.1:4096/session/a',
     'http://127.0.0.1:4096/session/b',
     'http://127.0.0.1:4096/session/c',
+    'http://127.0.0.1:4096/session/status',
   ]);
   w.dispose();
 });

@@ -96,6 +96,12 @@ export type TrackedEvent =
 export interface ServeActivityWatcher {
   start(): void;
   dispose(): void;
+  /**
+   * Absolute timestamp until which a tracked workspace session is known to be busy.
+   * 0 when nothing is known busy. Self-expiring: each poll re-arms it only while
+   * busy is actually observed.
+   */
+  busyUntil(): number;
 }
 
 /** Unified diff captured at save time. */

@@ -14,6 +14,18 @@ behind a design choice, see [`docs/decisions.md`](docs/decisions.md).
 
 ## [Unreleased]
 
+### Changed
+
+- **The "Are you still there?" prompt is suppressed while an opencode chat in this
+  workspace is busy.** The watcher previously inferred that opencode was working from
+  `time.updated` bumps alone, and that field does not move during a long tool call or
+  model stream — so the prompt fired at someone demonstrably mid-turn. It now also reads
+  `GET /session/status` once per tick and reads the server's own busy state directly
+  ([ADR-037](docs/decisions.md)). The suppression is a guard only: it records nothing, adds
+  no `opencode` event, and does not move the last-activity clock, so the idle check still
+  resumes from your last real activity once opencode goes quiet. Unconditional — there is
+  no setting for it.
+
 ## [0.7.7] - 2026-10-13
 
 ### Added
