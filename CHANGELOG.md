@@ -14,6 +14,8 @@ behind a design choice, see [`docs/decisions.md`](docs/decisions.md).
 
 ## [Unreleased]
 
+## [0.7.8] - 2026-10-15
+
 ### Changed
 
 - **The "Are you still there?" prompt is suppressed while an opencode chat in this
