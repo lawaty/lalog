@@ -60,6 +60,8 @@ let nextQuickPickItems: any[] = [];
 let nextInputBoxTexts: (string | undefined)[] = [];
 let quickPickGated = false;
 let quickPickGateResolve: ((v: any) => void) | null = null;
+let inputBoxGated = false;
+let inputBoxGateResolve: ((v: string | undefined) => void) | null = null;
 let promptCalls: PromptCall[] = [];
 let infoMessages: string[] = [];
 let errorMessages: string[] = [];
@@ -166,8 +168,14 @@ export const window = {
   },
   showInputBox: async (opts?: any) => {
     promptCalls.push({ kind: 'inputBox', title: opts?.title, value: opts?.value });
-    const t = nextInputBoxTexts.shift();
-    return t;
+    if (inputBoxGated) {
+      const v = await new Promise<string | undefined>((r) => {
+        inputBoxGateResolve = r;
+      });
+      inputBoxGated = false;
+      return v;
+    }
+    return nextInputBoxTexts.shift();
   },
   createQuickPick: <T>() => {
     const qp: any = {
@@ -339,6 +347,8 @@ export const mockVscode = {
     nextInputBoxTexts = [];
     quickPickGated = false;
     quickPickGateResolve = null;
+    inputBoxGated = false;
+    inputBoxGateResolve = null;
     promptCalls = [];
     infoMessages = [];
     errorMessages = [];
@@ -402,6 +412,16 @@ export const mockVscode = {
       quickPickGateResolve = null;
     }
     quickPickGated = false;
+  },
+  gateInputBox() {
+    inputBoxGated = true;
+  },
+  releaseInputBox(text: string | undefined) {
+    if (inputBoxGateResolve) {
+      inputBoxGateResolve(text);
+      inputBoxGateResolve = null;
+    }
+    inputBoxGated = false;
   },
   promptCalls(): PromptCall[] {
     return promptCalls;

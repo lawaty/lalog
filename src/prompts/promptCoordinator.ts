@@ -102,8 +102,8 @@ export class PromptCoordinator {
     }
   }
 
-  /** 'Are you still there?' — fired by the heartbeat when a session goes idle. */
-  async askStillWorking(session: Session): Promise<'active' | 'away' | 'end' | null> {
+  /** 'Are you still there?' — fired by the heartbeat when a session goes idle. Returns 'dismissed' if Esc/closed without answering (after acquire succeeded); null if not asked (acquire failed). */
+  async askStillWorking(session: Session): Promise<'active' | 'away' | 'end' | 'dismissed' | null> {
     if (!(await this.acquire())) return null;
     try {
       const activeH = fmtDuration(session.activeMinutes);
@@ -127,7 +127,7 @@ export class PromptCoordinator {
         ],
         { title: `Are you still there? · ${session.workspaceName}`, placeHolder: 'Idle for a while — still working?', ignoreFocusOut: true }
       );
-      if (!pick) return null;
+      if (!pick) return 'dismissed';
       return pick.choice;
     } finally {
       this.release();

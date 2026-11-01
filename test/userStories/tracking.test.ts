@@ -119,6 +119,25 @@ test('US-1.3 · "still working" counts idle as outside-VS-Code active', async (t
   const bx = splitActiveMinutes(s, h.th.idleGap);
   assert.equal(bx.vscodeMs, 0);
   assert.ok(bx.outsideMs > 0);
+  // Regression: the display's live tail is now - session.lastActivityAt. The
+  // answer must re-anchor the session, or the just-counted idle stretch is
+  // counted a second time and then clobbered back (the "two counters" bug).
+  assert.equal(s.lastActivityAt, Date.now(), 'the live tail is anchored at the answer');
+  const liveTail = Math.min(Date.now() - s.lastActivityAt, h.th.idleGap);
+  assert.equal(s.activeMinutes + liveTail, s.activeMinutes, 'the display adds no phantom time');
+});
+
+test('US-1.3 · dismissing the idle prompt counts as "still working"', async (t) => {
+  const h = setupHarness(t, { config: { idleConfirmAfterMinutes: 15 } });
+  await h.start();
+  await h.edit();
+  // No queued answer: showQuickPick resolves undefined, i.e. Esc/closed.
+  await h.tick(60_000);
+  await h.flush();
+  const s = h.manager.getSession()!;
+  assert.ok(s, 'session stays open');
+  assert.ok(s.activeMinutes >= 50 * 1000, `the idle stretch is counted, got ${s.activeMinutes}`);
+  assert.equal(s.lastActivityAt, Date.now(), 'the live tail is anchored at the dismissal');
 });
 
 test('US-1.3 · "I was away" trims and continues the same session', async (t) => {
@@ -316,14 +335,16 @@ test('US-1.3 · non-default idleGap changes statusBar live-tail cap and legacy s
   const h = setupHarness(t, { config: { idleGapMinutes: 30 } });
   await h.start();
   await h.edit(); // lastActivityAt = BASE_TIME, now = +2s
-  await h.tick(40_000); // now = +42s: past both caps, so 15s→"0m" and 30s→"1m"
+  await h.tick(40_000); // now = +42s: above a 15s gap, below a 90s one
   const s = h.manager.getSession()!;
   const sb = new LaLogStatusBar(() => {});
   sb.update(s, 0, 0, false, 15 * 1000);
   const text15 = mockVscode._statusBarItems[0].text;
-  sb.update(s, 0, 0, false, 30 * 1000);
-  const text30 = mockVscode._statusBarItems[0].text;
-  assert.notEqual(text15, text30, 'live-tail cap follows idleGapMs');
+  sb.update(s, 0, 0, false, 90 * 1000);
+  const text90 = mockVscode._statusBarItems[0].text;
+  assert.notEqual(text15, text90, 'live-tail follows idleGapMs');
+  assert.ok(text15.endsWith('· 0m'), 'a gap at/over idleGap shows no live tail');
+  assert.ok(text90.endsWith('· 1m'), 'a gap below idleGap shows the live tail');
 
   const MIN = 60 * 1000;
   const legacy: Session = {
@@ -377,6 +398,54 @@ test('US-1.4 · staleAfter wins over autoEndIdle', async (t) => {
   assert.ok(h.manager.getSession(), 'fresh session already running (stale handled it, not auto-end)');
 });
 
+test('US-1.4 · stale cutoff does not close a session while opencode is busy', async (t) => {
+  // staleAfter scales to 60s and idleGap to 120s, so the 60s heartbeat crosses
+  // staleAfter on the second tick. Without the busy guard this force-closes.
+  const h = setupHarness(t, {
+    config: {
+      staleSessionAfterMinutes: 1,
+      idleGapMinutes: 120,
+      progressAfterMinutes: 100000,
+      describeAfterMinutes: 100000,
+      wrapAfterMinutes: 100000,
+    },
+  });
+  const watcher = {
+    start: () => {},
+    dispose: () => {},
+    busyUntil: () => Date.now() + 60000,
+  };
+  h.manager.setServeWatcher(watcher);
+  await h.start();
+  await h.edit();
+
+  await h.tick(60_000);
+  await h.tick(60_000);
+  await h.flush();
+
+  assert.equal((await h.closedSessions()).length, 0, 'busy session is not force-closed as stale');
+  assert.ok(h.manager.getSession(), 'session still running while opencode is busy');
+  assert.ok(h.manager.getSession()!.activeMinutes > 0, 'busy time accrued');
+});
+
+test('US-1.4 · auto-end restarts a fresh session when autoEndIdle fires first', async (t) => {
+  // autoEndIdle (1s) < staleAfter (120s), so checkStale does not handle it.
+  const h = setupHarness(t, { config: { autoEndAfterIdleMinutes: 1, staleSessionAfterMinutes: 120 } });
+  await h.start();
+  await h.work(40); // 40s of active time, so the close is a recordable session
+  const before = h.manager.getSession()!;
+
+  await h.tick(60_000);
+  await h.flush();
+
+  const closed = await h.closedSessions();
+  assert.equal(closed.length, 1, 'auto-end closed the session');
+  assert.equal(closed[0].closedReason, 'auto-idle');
+  const after = h.manager.getSession();
+  assert.ok(after, 'a fresh session started immediately');
+  assert.notEqual(after!.id, before.id, 'fresh session is a different session');
+});
+
 test('US-1.4 · answering an old prompt after stale close cannot affect the fresh session', async (t) => {
   const h = setupHarness(t, { config: { idleConfirmAfterMinutes: 15, staleSessionAfterMinutes: 120 } });
   await h.start();
@@ -406,10 +475,11 @@ test('US-1.5 · pause freezes the clock (no accrual/events/prompts)', async (t) 
   assert.ok(h.manager.isPaused());
   await h.edit();
   assert.equal(s.events.edits, 2, 'no events while paused');
-  assert.equal(s.activeMinutes, before, 'no accrual while paused');
+  const afterPause = s.activeMinutes;
+  assert.ok(afterPause > before, 'pause accrues the gap up to the pause click');
   await h.tick(120_000);
   await h.flush();
-  assert.equal(s.activeMinutes, before);
+  assert.equal(s.activeMinutes, afterPause, 'no accrual while paused');
   assert.equal(mockVscode.promptCalls().length, 0);
 });
 
@@ -563,7 +633,8 @@ test('US-1.4 · isStale boundary: null, exactly-at, just-under, past', () => {
 });
 
 test('US-1.3 · checkIdle suppresses prompt while opencode is busy', async (t) => {
-  const h = setupHarness(t, { config: { idleConfirmAfterMinutes: 15 } });
+  // A scaled idleGap wider than the 60s heartbeat, so a busy heartbeat can accrue.
+  const h = setupHarness(t, { config: { idleGapMinutes: 120, idleConfirmAfterMinutes: 15 } });
   const watcher = {
     start: () => {},
     dispose: () => {},
@@ -573,16 +644,19 @@ test('US-1.3 · checkIdle suppresses prompt while opencode is busy', async (t) =
   await h.start();
   await h.edit(); // lastActivityAt = BASE_TIME
 
-  // Trigger idle condition:
-  // now > lastActivityAt + th.idleConfirm
-  await h.tick(20 * 60000); // 20 mins > 15 mins
+  // Trigger idle condition: 20 heartbeats, each 1 min apart, all busy.
+  for (let i = 0; i < 20; i++) await h.tick(60_000);
   await h.flush();
 
-  assert.equal(mockVscode.promptCalls().length, 0, 'idle prompt suppressed while busy');
+  assert.ok(
+    !mockVscode.promptCalls().some((c) => c.kind === 'quickPick' && c.title?.includes('Are you still there')),
+    'idle prompt suppressed while busy'
+  );
+  assert.ok(h.manager.getSession()!.activeMinutes > 0, 'busy period accrued time');
 });
 
 test('US-1.3 · checkIdle prompts once busy period passes', async (t) => {
-  const h = setupHarness(t, { config: { idleConfirmAfterMinutes: 15 } });
+  const h = setupHarness(t, { config: { idleGapMinutes: 120, idleConfirmAfterMinutes: 15 } });
   // Busy *now*, for one minute — recomputed on every call, so the window keeps
   // ahead of the clock the harness ticks. A value captured once at BASE time
   // would already be 19 minutes stale by the first assertion below.
@@ -597,23 +671,28 @@ test('US-1.3 · checkIdle prompts once busy period passes', async (t) => {
   await h.edit();
 
   // Tick past 15 min, but still busy
-  await h.tick(20 * 60000);
+  for (let i = 0; i < 20; i++) await h.tick(60_000);
   await h.flush();
-  assert.equal(mockVscode.promptCalls().length, 0, 'suppressed');
+  assert.ok(
+    !mockVscode.promptCalls().some((c) => c.kind === 'quickPick' && c.title?.includes('Are you still there')),
+    'suppressed'
+  );
 
-  // Busy period expires
+  // Busy period expires; because busy counted as activity, the prompt waits a
+  // full idleConfirm of quiet before firing.
   busy = false;
-  await h.tick(60000); // next heartbeat
+  await h.tick(15 * 60000);
   await h.flush();
 
   assert.ok(
     mockVscode.promptCalls().some((c) => c.kind === 'quickPick' && c.title?.includes('Are you still there')),
     'idle prompt shown once no longer busy'
   );
+  assert.ok(h.manager.getSession()!.activeMinutes > 0, 'busy period accrued time');
 });
 
-test('US-1.3 · guard leaves tracked state unchanged when busy', async (t) => {
-  const h = setupHarness(t, { config: { idleConfirmAfterMinutes: 15 } });
+test('US-1.3 · busy accrues activity but still suppresses the prompt', async (t) => {
+  const h = setupHarness(t, { config: { idleGapMinutes: 120, idleConfirmAfterMinutes: 15 } });
   const watcher = {
     start: () => {},
     dispose: () => {},
@@ -624,13 +703,16 @@ test('US-1.3 · guard leaves tracked state unchanged when busy', async (t) => {
   await h.edit();
   const s = h.manager.getSession()!;
   const beforeActivity = s.lastActivityAt;
-  const beforeArmAt = (h.manager as any).lastIdleArmAt;
 
-  await h.tick(20 * 60000);
+  for (let i = 0; i < 20; i++) await h.tick(60_000);
   await h.flush();
 
-  assert.equal(s.lastActivityAt, beforeActivity, 'lastActivityAt unchanged');
-  assert.equal((h.manager as any).lastIdleArmAt, beforeArmAt, 'lastIdleArmAt unchanged');
+  assert.ok(s.lastActivityAt > beforeActivity, 'busy advanced the activity anchor');
+  assert.ok(s.activeMinutes > 0, 'busy period accrued time');
+  assert.ok(
+    !mockVscode.promptCalls().some((c) => c.kind === 'quickPick' && c.title?.includes('Are you still there')),
+    'idle prompt suppressed while busy'
+  );
 });
 
 test('US-1.3 · no crash when watcher is absent', async (t) => {

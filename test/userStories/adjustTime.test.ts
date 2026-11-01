@@ -168,6 +168,10 @@ test('US-4.9 · a wrong "still working" is rolled back on the live session, whic
   await h.tick(3000);
   await h.edit();
   assert.equal(h.manager.getSession()!.activeMinutes, keepMs + 5000, '5s after the adjust');
+  // The heartbeat reaches the idle prompt. Answer it explicitly ("I was away")
+  // so this test keeps measuring the correction surviving a heartbeat; an
+  // unanswered prompt is Esc and now counts the idle stretch as "still working".
+  mockVscode.queueQuickPick('away');
   await h.heartbeat();
   assert.equal(h.activeSnapshot()!.activeMinutes, keepMs + 5000, 'the heartbeat keeps the correction');
 });

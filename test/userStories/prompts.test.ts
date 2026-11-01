@@ -364,3 +364,81 @@ test('US-3.11 · describe-now opens the flow immediately', async (t) => {
   assert.equal(s.description, 'now description');
   assert.equal(s.type, 'feature');
 });
+
+test('US-3.12 · a dismissed describe prompt is not re-asked on later activity or timers', async (t) => {
+  const h = setupHarness(t);
+  await h.start();
+  await h.work(95); // describePending
+  const describes = () =>
+    mockVscode.promptCalls().filter((c) => c.kind === 'inputBox' && c.title === 'What are you working on?').length;
+  mockVscode.queueInputBox(undefined); // Esc on the describe prompt…
+  // …and nothing queued for the fallback quick pick, so it is dismissed too → { choice: 'skipped' }
+  h.debugEnd();
+  await h.flush();
+  assert.equal(describes(), 1, 'the describe prompt was shown exactly once');
+  assert.equal(h.manager.getMachine().state, 'active', 'dismissal leaves the describePending state');
+  assert.equal(h.manager.getSession()!.needsDescription, true, 'skipped still flags needsDescription');
+
+  // Several minutes of continued activity, another breakpoint, terminal
+  // events, and the old 30-minute force window must not re-ask a dismissed prompt.
+  h.debugEnd();
+  await h.flush();
+  for (let i = 0; i < 4; i++) {
+    await h.edit();
+    await h.tick(5 * 60_000);
+  }
+  h.task();
+  h.terminalShellStart({ commandLine: 'ls' });
+  h.terminalShellEnd({ commandLine: 'ls' }, 0);
+  await h.tick(10 * 60_000);
+  await h.flush();
+  await h.heartbeat();
+  assert.equal(describes(), 1, 'a dismissed describe prompt is not re-asked');
+});
+
+ test('US-3.13 · a describe prompt left open is not re-asked on later heartbeats', async (t) => {
+  const h = setupHarness(t);
+  await h.start();
+  mockVscode.gateInputBox();
+  await h.work(95); // crosses describeAt (90 min scaled to 90s)
+  h.debugEnd();
+  await h.flush();
+  const title = 'What are you working on?';
+  const shown = () =>
+    mockVscode.promptCalls().filter((c) => c.kind === 'inputBox' && c.title === title).length;
+  assert.equal(shown(), 1, 'describe prompt shown once');
+
+  // Ten minutes of heartbeats while the prompt is still open.
+  await h.tick(600_000);
+  assert.equal(shown(), 1, 'not re-asked while still open');
+
+  mockVscode.releaseInputBox(undefined);
+  await h.flush();
+  await h.tick(600_000);
+  assert.equal(shown(), 1, 'not re-asked after dismissal either');
+});
+
+test('US-3.14 · answering describe does not immediately trigger progress', async (t) => {
+  const h = setupHarness(t, {
+    config: {
+      describeAfterMinutes: 1,
+      progressAfterMinutes: 1,
+      wrapAfterMinutes: 100000,
+      staleSessionAfterMinutes: 100000,
+      idleConfirmAfterMinutes: 100000,
+    },
+  });
+  await h.start();
+  await h.work(1);
+  mockVscode.queueInputBox('fixing auth');
+  mockVscode.queueQuickPick('other');
+  h.debugEnd();
+  await h.flush();
+  await h.work(5);
+  await h.flush();
+  await h.heartbeat();
+  await h.flush();
+  const progress = () =>
+    mockVscode.promptCalls().filter((c) => c.title?.startsWith('Progress update')).length;
+  assert.equal(progress(), 0, 'a describe answer also services the progress checkpoint');
+});

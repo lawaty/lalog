@@ -29,7 +29,10 @@ export class LaLogStatusBar implements vscode.Disposable {
       this.item.show();
       return;
     }
-    const liveMs = paused ? 0 : Math.min(Date.now() - session.lastActivityAt, idleGapMs);
+    const gap = Date.now() - session.lastActivityAt;
+    // Match the accrual rule: a gap at/over idleGap is never counted, so the live
+    // tail must not display it either (pause would otherwise drop it).
+    const liveMs = paused ? 0 : gap > 0 && gap < idleGapMs ? gap : 0;
     const activeMs = session.activeMinutes + liveMs;
     const desc = session.description ? ` ${session.description}` : '';
     const icon = paused ? '$(debug-pause)' : '$(play)';

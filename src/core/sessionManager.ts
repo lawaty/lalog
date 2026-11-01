@@ -225,6 +225,8 @@ export class SessionManager implements vscode.Disposable {
   private paused = false;
   /** Guard against concurrent stale closes (heartbeat + activity events). */
   private staleClosing = false;
+  /** Last wall-clock time onStateChanged was emitted from the activity path (throttle). */
+  private lastUiEmitAt = 0;
 
   /**
    * The single entry point for activity of any source: VS Code capture, the
@@ -238,7 +240,11 @@ export class SessionManager implements vscode.Disposable {
     // Hard stale cutoff (ADR-022): the first event after >= staleAfter of
     // inactivity closes the old session and starts fresh — no continue option.
     // Re-dispatch the event so it lands in the fresh session, not the stale one.
-    if (this.session && isStale(this.machine.lastActivityAt, ts, this.th.staleAfter)) {
+    if (
+      this.session &&
+      isStale(this.machine.lastActivityAt, ts, this.th.staleAfter) &&
+      !(this.serveWatcher && this.serveWatcher.busyUntil() > ts)
+    ) {
       void this.checkStale(ts).then(() => this.onActivityEvent(ev, filePath, ts));
       return;
     }
@@ -248,11 +254,9 @@ export class SessionManager implements vscode.Disposable {
     // Recovery: first event after open should not accrue a giant gap.
     if (this.firstActivityAfterOpen) {
       this.firstActivityAfterOpen = false;
-      // set lastActivityAt to ts so the first gap is ~0
-      if (this.machine.state === 'active') {
-        this.machine.lastActivityAt = ts;
-        this.session.lastActivityAt = ts;
-      }
+      // set lastActivityAt to ts so the first gap is ~0, in every state
+      this.machine.lastActivityAt = ts;
+      this.session.lastActivityAt = ts;
     }
 
     const prev = this.machine.lastActivityAt;
@@ -285,6 +289,12 @@ export class SessionManager implements vscode.Disposable {
       this.schedulePrompt('describe');
     } else if (s === 'wrapPending') {
       this.schedulePrompt('wrap');
+    }
+
+    const nowMs = Date.now();
+    if (nowMs - this.lastUiEmitAt >= 5000) {
+      this.lastUiEmitAt = nowMs;
+      this.onStateChanged();
     }
   }
 
@@ -349,6 +359,15 @@ export class SessionManager implements vscode.Disposable {
   pause(): void {
     if (!this.session || this.paused) return;
     const now = Date.now();
+    const last = this.machine.lastActivityAt;
+    if (last !== null) {
+      const gap = now - last;
+      if (gap > 0 && gap < this.th.idleGap) {
+        this.machine.activeMinutes += gap;
+        this.machine.lastActivityAt = now;
+        this.session.lastActivityAt = now;
+      }
+    }
     this.closeOpenSpanAt(this.machine.lastActivityAt ?? now);
     this.syncSessionActive();
     this.paused = true;
@@ -454,37 +473,49 @@ export class SessionManager implements vscode.Disposable {
     // leaves lastActivityAt and lastIdleArmAt alone: no tracked event, nothing
     // re-armed, so when opencode goes quiet the normal timer resumes and this
     // stretch is classified like any other.
-    if (this.serveWatcher && this.serveWatcher.busyUntil() > now) return;
+    if (this.serveWatcher && this.serveWatcher.busyUntil() > now) {
+      // Busy = work in flight. Count it as opencode activity so the counter
+      // keeps moving and the idle prompt does not fire mid-turn.
+      this.onActivityEvent('opencode', undefined, now);
+      return;
+    }
     if (now - m.lastActivityAt < this.th.idleConfirm) return;
     if (now < this.lastIdleArmAt) return;
     this.idlePromptOpen = true;
     this.idleAskedAt = Date.now();
     this.idleAskedLastActivityAt = m.lastActivityAt;
     const session = this.session;
-    void this.prompts.askStillWorking(session).then((choice) => {
-      this.idlePromptOpen = false;
-      this.lastIdleArmAt = Date.now() + this.th.idleConfirm;
-      if (this.session !== session) return; // stale close replaced the session while the prompt was open
-      if (choice === 'end') {
-        this.trimIdleAwayWindow();
-        void this.endSession('user');
-      } else if (choice === 'away') {
-        // "I was away and came back": drop the idle window since the prompt was
-        // asked and resume tracking from right now, without ending the session.
-        const now = Date.now();
-        this.trimIdleAwayWindow();
-        if (this.session) {
-          this.machine.lastActivityAt = now;
-          this.session.lastActivityAt = now;
-          this.openSpanStart = now;
-          this.scheduleSave();
-          this.onStateChanged();
+    void this.prompts
+      .askStillWorking(session)
+      .then((choice) => {
+        this.lastIdleArmAt = Date.now() + this.th.idleConfirm;
+        if (this.session !== session) return; // stale close replaced the session while the prompt was open
+        if (choice === 'end') {
+          this.trimIdleAwayWindow();
+          void this.endSession('user');
+        } else if (choice === 'away') {
+          // "I was away and came back": drop the idle window since the prompt was
+          // asked and resume tracking from right now, without ending the session.
+          const now = Date.now();
+          this.trimIdleAwayWindow();
+          if (this.session) {
+            this.machine.lastActivityAt = now;
+            this.session.lastActivityAt = now;
+            this.openSpanStart = now;
+            this.scheduleSave();
+            this.onStateChanged();
+          }
+        } else if (choice === 'active' || choice === 'dismissed') {
+          this.idleAskedAt = null;
+          this.accrueOutsideConfirmed(Date.now());
         }
-      } else if (choice === 'active') {
-        this.idleAskedAt = null;
-        this.accrueOutsideConfirmed(Date.now());
-      }
-    });
+      })
+      .catch((err) => {
+        console.error('[lalog] idle prompt failed:', err);
+      })
+      .finally(() => {
+        this.idlePromptOpen = false;
+      });
   }
 
   /**
@@ -516,6 +547,7 @@ export class SessionManager implements vscode.Disposable {
     this.machine.describeAnchor = Math.min(this.machine.describeAnchor, trimmed.activeMinutes);
     this.machine.wrapAnchor = Math.min(this.machine.wrapAnchor, trimmed.activeMinutes);
     this.machine.lastActivityAt = askAt;
+    this.session.lastActivityAt = askAt;
     this.openSpanStart = null;
   }
 
@@ -532,6 +564,9 @@ export class SessionManager implements vscode.Disposable {
     }
     this.session.activeMinutes = m.activeMinutes;
     m.lastActivityAt = now;
+    // The UI live-tail is computed from session.lastActivityAt; advance it in
+    // lockstep with the machine or the confirmed idle stretch is counted twice.
+    this.session.lastActivityAt = now;
     this.openSpanStart = now;
     this.scheduleSave();
     this.onStateChanged();
@@ -547,13 +582,17 @@ export class SessionManager implements vscode.Disposable {
     }
   }
 
-  private schedulePrompt(kind: 'describe' | 'wrap'): void {
+  private schedulePrompt(kind: 'describe' | 'wrap', delayMs?: number): void {
     // If already scheduled, don't stack.
     if (this.forceTimers.has(kind)) return;
     const forceMs =
-      kind === 'describe' ? this.th.describeForce - this.th.describeAt : this.th.wrapForce - this.th.wrapAt;
+      delayMs ?? (kind === 'describe' ? this.th.describeForce - this.th.describeAt : this.th.wrapForce - this.th.wrapAt);
     const timer = setTimeout(() => {
       this.forceTimers.delete(kind);
+      if (this.idlePromptOpen) {
+        this.schedulePrompt(kind, 5000);
+        return;
+      }
       if (kind === 'describe') {
         this.presentDescribe(null);
       } else {
@@ -600,14 +639,18 @@ export class SessionManager implements vscode.Disposable {
 
   private async runDescribe(breakpoint: BreakpointKind | null, force = false): Promise<void> {
     if (!this.session) return;
-    // The prompt is being shown now, so any pending force timer for it is moot:
-    // leaving it armed would pop the very same question again later.
     this.clearForceTimer('describe');
     const session = this.session;
     const sameAsLast = this.lastDescriptionFor ? await this.lastDescriptionFor(session.workspaceKey) : undefined;
-    const result = await this.prompts.askDescribe(this.machine, session, breakpoint, sameAsLast, force);
-    if (!result) return;
-    this.applyDescribeResult(session, result);
+    const result = await this.prompts.askDescribe(this.machine, session, breakpoint, sameAsLast, force).catch((err) => {
+      console.error('[lalog] describe prompt failed:', err);
+      return null;
+    });
+    // The session may have been ended/replaced (stale or auto-end) while the
+    // prompt was open. A result from the old session must never touch the new one.
+    if (this.session !== session) return;
+    if (!result) return; // not shown (another prompt visible): a later breakpoint retries
+    await this.applyDescribeResult(session, result);
   }
 
   private async applyDescribeResult(s: Session, result: DescribeResult): Promise<void> {
@@ -616,6 +659,9 @@ export class SessionManager implements vscode.Disposable {
     // interval away from this response, so the cumulative total never leaves the
     // prompt permanently due (which is what made it re-ask on the next event).
     rearmDescribe(this.machine);
+    // A describe answer is also a progress update: do not let the sibling
+    // progress checkpoint fire back-to-back on the next heartbeat.
+    this.lastProgressActiveMin = this.machine.activeMinutes;
     if (result.choice === 'described') {
       const text = result.text.trim();
       s.type = result.type;
@@ -665,12 +711,15 @@ export class SessionManager implements vscode.Disposable {
     if (!this.session) return;
     this.clearForceTimer('wrap');
     const s = this.session;
-    const result = await this.prompts.askWrap(this.machine, s, breakpoint);
-    // 'skipped' covers both "dismissed the picker" and "the coordinator refused
-    // to show it"; either way the wrap checkpoint is re-armed from this moment
-    // and the state leaves wrapPending, so the next breakpoint cannot re-ask the
-    // same unanswered prompt.
+    const result = await this.prompts.askWrap(this.machine, s, breakpoint).catch((err) => {
+      console.error('[lalog] wrap prompt failed:', err);
+      return { choice: 'skipped' as const };
+    });
+    // Same rule as describe: an answer to a prompt shown for an ended session
+    // must not re-arm or mutate the session that replaced it.
+    if (this.session !== s) return;
     rearmWrap(this.machine);
+    this.lastProgressActiveMin = this.machine.activeMinutes;
     if (result.choice !== 'skipped') {
       await this.applyWrapResult(s, result);
       return;
@@ -870,11 +919,19 @@ export class SessionManager implements vscode.Disposable {
     }
     void this.openWorkspace();
     this.heartbeatTimer = setInterval(() => {
-      this.scheduleSave();
-      void this.checkStale(Date.now());
-      this.checkIdle(Date.now());
-      this.checkProgress(Date.now());
-      this.checkAutoEnd(Date.now());
+      try {
+        this.scheduleSave();
+        void this.checkStale(Date.now()).catch((err) => {
+          console.error('[lalog] heartbeat checkStale failed:', err);
+        });
+        this.checkIdle(Date.now());
+        this.checkProgress(Date.now());
+        void this.checkAutoEnd(Date.now()).catch((err) => {
+          console.error('[lalog] heartbeat checkAutoEnd failed:', err);
+        });
+      } catch (err) {
+        console.error('[lalog] heartbeat failed:', err);
+      }
     }, 60 * 1000);
   }
 
@@ -892,18 +949,31 @@ export class SessionManager implements vscode.Disposable {
     if (m.activeMinutes - this.lastProgressActiveMin < this.th.progressAt) return;
     this.progressPromptOpen = true;
     const session = this.session;
-    void this.prompts.askProgressUpdate(session).then((text) => {
-      this.progressPromptOpen = false;
-      this.lastProgressActiveMin = m.activeMinutes;
-      if (!text) return;
-      session.notes.push({ at: Date.now(), text });
-      if (!session.description) {
-        session.description = text;
-        session.needsDescription = false;
-      }
-      this.scheduleSave();
-      this.onStateChanged();
-    });
+    void this.prompts
+      .askProgressUpdate(session)
+      .then((text) => {
+        this.progressPromptOpen = false;
+        // The session may have been ended/replaced (stale or auto-end) while the
+        // prompt was open. A stale answer must not re-arm the new session's
+        // progress checkpoint from the old machine's clock.
+        if (this.session !== session) return;
+        this.lastProgressActiveMin = this.machine.activeMinutes;
+        // A progress note also services the describe checkpoint (it may even fill
+        // the description below), so do not ask the describe prompt right after.
+        this.machine.describeAnchor = this.machine.activeMinutes;
+        if (!text) return;
+        session.notes.push({ at: Date.now(), text });
+        if (!session.description) {
+          session.description = text;
+          session.needsDescription = false;
+        }
+        this.scheduleSave();
+        this.onStateChanged();
+      })
+      .catch((err) => {
+        this.progressPromptOpen = false;
+        console.error('[lalog] progress prompt failed:', err);
+      });
   }
 
   /**
@@ -913,6 +983,9 @@ export class SessionManager implements vscode.Disposable {
    */
   private async checkStale(now: number): Promise<void> {
     if (!this.session || this.paused || this.staleClosing) return;
+    // A live opencode turn is work in flight: do not force-close it as stale.
+    // checkIdle (same heartbeat, just after) accrues it and refreshes the anchor.
+    if (this.serveWatcher && this.serveWatcher.busyUntil() > now) return;
     const m = this.machine;
     if (!isStale(m.lastActivityAt, now, this.th.staleAfter)) return;
     this.staleClosing = true;
@@ -932,13 +1005,21 @@ export class SessionManager implements vscode.Disposable {
    * autoEndIdle of no VS Code activity AND no confirmation. endedAt is
    * lastActivityAt (active-only) so nothing idle is ever counted.
    */
-  private checkAutoEnd(now: number): void {
+  private async checkAutoEnd(now: number): Promise<void> {
     if (!this.session || this.paused || this.staleClosing) return;
     if (this.idlePromptOpen) return;
+    if (this.serveWatcher && this.serveWatcher.busyUntil() > now) return;
     const m = this.machine;
     if (m.lastActivityAt === null) return;
     if (now - m.lastActivityAt < this.th.autoEndIdle) return;
-    void this.endSession('auto-idle');
+    this.staleClosing = true;
+    try {
+      const closed = await this.endSession('auto-idle');
+      if (!closed) return;
+      await this.startFresh();
+    } finally {
+      this.staleClosing = false;
+    }
   }
 
   dispose(): void {
@@ -959,6 +1040,10 @@ export class SessionManager implements vscode.Disposable {
    * reliably prompt here.
    */
   async shutdown(): Promise<void> {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
     if (this.session) {
       await this.endSession('vscode-shutdown');
     }

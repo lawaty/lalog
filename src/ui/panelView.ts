@@ -998,7 +998,8 @@ export class LaLogPanelProvider implements vscode.WebviewViewProvider {
       el('projname').textContent = a.projectName || 'No project';
       el('projdot').style.background = a.projectColor || 'transparent';
       el('btnProject').classList.remove('hidden');
-      const liveMs = paused ? 0 : Math.max(0, Math.min(Date.now() - a.lastActivityAt, st.idleGap));
+      const gap = Date.now() - a.lastActivityAt;
+      const liveMs = paused ? 0 : gap > 0 && gap < st.idleGap ? gap : 0;
       el('clock').textContent = fmtDur2(a.activeMinutes + liveMs);
       el('active').textContent = fmtClock(Date.now());
       el('btnPause').classList.toggle('hidden', paused);

@@ -69,11 +69,16 @@ export function onActivity(m: Machine, now: number, th: ThresholdsMs): SessionSt
   // Accrue active minutes: only count the gap since last activity if < idleGap.
   if (m.lastActivityAt !== null) {
     const gap = now - m.lastActivityAt;
-    if (gap < th.idleGap) {
+    // Only accrue a strictly positive gap below the idle threshold. Negative
+    // gaps (out-of-order debounced events, clock step-back) must not shrink
+    // the count, and a gap at/over idleGap accrues nothing.
+    if (gap > 0 && gap < th.idleGap) {
       m.activeMinutes += gap;
     }
   }
-  m.lastActivityAt = now;
+  // Never move the anchor backward; a forward jump still re-anchors (with no
+  // accrual when it was >= idleGap).
+  if (m.lastActivityAt === null || now > m.lastActivityAt) m.lastActivityAt = now;
 
   // Wrap is checked before describe: `wrapAt` is always later than `describeAt`,
   // so a due wrap interval subsumes the describe one. Without this ordering,

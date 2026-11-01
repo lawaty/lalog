@@ -107,6 +107,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   });
 
   let cachedTodayMs = 0;
+  let cachedUntrackedMs = 0;
   const panel = new LaLogPanelProvider(
     () => store.loadAll(),
     () => manager.getSession(),
@@ -129,21 +130,31 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
 
   async function refreshStatus(): Promise<void> {
-    statusBar.loading();
+    if (!manager.getSession()) { statusBar.loading(); }
     let all: Session[];
     try {
       all = await store.loadAll();
-    } catch {
-      statusBar.update(null, 0, 0, false, th.idleGap);
+    } catch (err) {
+      console.error('[lalog] refreshStatus: loadAll failed:', err);
+      // Keep showing the live session with the last known totals; a transient
+      // disk error must not blank the counter.
+      try {
+        statusBar.update(manager.getSession(), cachedTodayMs, cachedUntrackedMs, manager.isPaused(), th.idleGap);
+        panel.refresh();
+      } catch (e) {
+        console.error('[lalog] refreshStatus: fallback update failed:', e);
+      }
       return;
     }
     const today = todayActiveMs(all, Date.now());
     cachedTodayMs = today;
     const now = Date.now();
+    const untracked = todayUntrackedMs(all, now);
+    cachedUntrackedMs = untracked;
     statusBar.update(
       manager.getSession(),
       today,
-      todayUntrackedMs(all, now),
+      untracked,
       manager.isPaused(),
       th.idleGap
     );
@@ -673,6 +684,20 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const todayRefresh = setInterval(() => void refreshStatus(), 60 * 1000);
   context.subscriptions.push({ dispose: () => clearInterval(todayRefresh) });
 
+  // Cheap status-bar tick: re-render from the live session + cached totals
+  // without touching disk (statusBar.update recomputes the live tail from
+  // Date.now()). Keeps the live counter moving between refreshStatus passes.
+  const liveTick = setInterval(() => {
+    const s = manager.getSession();
+    if (!s) return;
+    try {
+      statusBar.update(s, cachedTodayMs, cachedUntrackedMs, manager.isPaused(), th.idleGap);
+    } catch (err) {
+      console.error('[lalog] status bar tick failed:', err);
+    }
+  }, 10 * 1000);
+  context.subscriptions.push({ dispose: () => clearInterval(liveTick) });
+
   // Workspace folder changes: suspend/switch logic.
   context.subscriptions.push(
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
@@ -702,9 +727,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       manageServe: activityCfg.manageServe,
       opencodePath: activityCfg.opencodePath,
       spawnPort: activityCfg.spawnPort,
-      // Only poll while LaLog is actually tracking something in this window:
-      // no session open means no timer, no request, and no serve of our own.
-      shouldObserve: () => manager.getSession() !== null,
+      // Poll while the integration is enabled and a workspace folder is open.
+      // A missing session no longer parks the watcher: an opencode activity
+      // event must be able to start a session by itself (US-1.1 "never
+      // untracked"). No workspace folder => nothing to attribute a session to.
+      shouldObserve: () => (vscode.workspace.workspaceFolders?.length ?? 0) > 0,
       onActivity: (now) => manager.onActivityEvent('opencode', undefined, now),
     });
     manager.setServeWatcher(serveWatcher);
