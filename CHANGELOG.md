@@ -14,6 +14,34 @@ behind a design choice, see [`docs/decisions.md`](docs/decisions.md).
 
 ## [Unreleased]
 
+## [0.7.9] - 2026-11-02
+
+### Fixed
+
+- **Tracking no longer stops by itself while you work in opencode.** A busy opencode
+  turn now counts as activity, so the counter keeps moving and is never force-closed as
+  stale; the same guard protects auto-end.
+- **Answering "I'm still working" no longer double-counts the idle stretch, and pause
+  keeps the time up to the click.** The status bar and panel now use the same
+  `0 < gap < idleGap` rule as accrual, so pausing and resuming never drops the counter.
+- **Describe, progress, and wrap prompts can no longer fire back-to-back.** Answering one
+  checkpoint re-arms its sibling, so `progressAfterMinutes` and `describeAfterMinutes`
+  landing together no longer produces a prompt storm.
+- **A prompt left open across a stale/auto-end restart is discarded** instead of mutating
+  the fresh session, and prompt failures clear their open flags.
+
+### Changed
+
+- **Auto-end immediately starts a fresh session** instead of leaving tracking stopped
+  until the next activity event.
+- **The status bar refreshes every 10 seconds from the live session** and keeps the last
+  known totals if a disk read fails.
+
+### Internal
+
+- Added regressions for busy/stale handling, auto-end restart, and repeated prompts
+  (US-1.3, US-1.4, US-3.12–3.14), plus input-box gating in the test harness.
+
 ## [0.7.8] - 2026-10-15
 
 ### Changed
