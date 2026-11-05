@@ -5,16 +5,6 @@ export type SessionState =
   | 'wrapPending'
   | 'grace';
 
-export type SessionType =
-  | 'feature'
-  | 'bugfix'
-  | 'research'
-  | 'refactor'
-  | 'review'
-  | 'docs'
-  | 'ops'
-  | 'other';
-
 export type ClosedReason =
   | 'user'
   | 'auto-idle'
@@ -49,7 +39,6 @@ export interface Session {
   endedAt?: number;
   lastActivityAt: number;
   activeMinutes: number;
-  type?: SessionType;
   description?: string;
   notes: { at: number; text: string }[];
   needsDescription: boolean;

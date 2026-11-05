@@ -106,7 +106,7 @@ export async function generateReport(
     const bxNote = bx.outsideMs > 0 ? ` · *${fmtDuration(bx.vscodeMs)} in Code / ${fmtDuration(bx.outsideMs)} outside*` : '';
     const projTag = resolveProjectName(s, projects);
     lines.push(
-      `### ${startTxt} → ${endTxt} · ${fmtDuration(effectiveMs(s, now, idleGapMs))} · ${projTag} · ${s.workspaceName}${s.type ? ` · ${s.type}` : ''}${bxNote}`
+      `### ${startTxt} → ${endTxt} · ${fmtDuration(effectiveMs(s, now, idleGapMs))} · ${projTag} · ${s.workspaceName}${bxNote}`
     );
     lines.push(desc);
     if (s.events.topFiles.length) {

@@ -166,7 +166,6 @@ test('US-6.6 · buildPdfModel buckets days and scopes like the report', () => {
 test('US-6.6 · exportPdf command writes a personal PDF with toggles and opens it', async (t) => {
   const ext = await setupExtension(t);
   mockVscode.queueInputBox('pdf desc');
-  mockVscode.queueQuickPick('feature');
   await mockVscode.commands.executeCommand('lalog.describeNow');
   await flush();
   for (let i = 0; i < 8; i++) {
@@ -197,7 +196,6 @@ test('US-6.6 · exportPdf command writes a personal PDF with toggles and opens i
   assert.ok(str.startsWith('%PDF-1.4'));
   assert.ok(str.includes('pdf desc'), 'descriptions toggled on');
   assert.ok(/\d\d:\d\d-\d\d:\d\d/.test(str), 'time ranges toggled on');
-  assert.ok(!str.includes('feature'), 'task types toggled off override the personal default');
 
   const multi = mockVscode._promptCalls.find((c) => c.title === 'Include in PDF');
   assert.ok(multi && multi.canPickMany, 'detail picker is a multi-select');
@@ -221,7 +219,6 @@ test('US-6.7 · client preset renders a minimal per-day abstract sheet', () => {
   const now = Date.parse('2026-09-23T12:00:00');
   const s1 = sessionAt(Date.parse('2026-09-21T10:00:00'), 45 * MIN, {
     description: 'Client work',
-    type: 'feature',
     gitBranch: 'fix/pdf-branch',
     events: {
       edits: 8,
@@ -230,6 +227,7 @@ test('US-6.7 · client preset renders a minimal per-day abstract sheet', () => {
       fileops: 0,
       tasks: 0,
       debug: 0,
+      opencode: 0,
       topFiles: [{ path: '/ws/auth.ts', edits: 8, firstTouch: 0, lastTouch: 0 }],
     },
   });
@@ -242,7 +240,6 @@ test('US-6.7 · client preset renders a minimal per-day abstract sheet', () => {
   assert.ok(str.includes('Client work'), 'descriptions');
   assert.ok(!str.includes('auth.ts'), 'top files excluded');
   assert.ok(!str.includes('fix/pdf-branch'), 'git excluded');
-  assert.ok(!str.includes('feature'), 'task types excluded');
   assert.ok(str.includes('/Count 2'), 'client preset starts each day on a new page');
 
   const personal = renderPdfReport(model, defaultPdfOptions('personal')).toString('latin1');

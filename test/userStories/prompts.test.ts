@@ -21,12 +21,10 @@ test('US-3.1 · describe held to breakpoint, then force-timed', async (t) => {
     'held until a breakpoint'
   );
   mockVscode.queueInputBox('fixing auth');
-  mockVscode.queueQuickPick('other');
   h.debugEnd();
   await h.flush();
   const s = h.manager.getSession()!;
   assert.equal(s.description, 'fixing auth');
-  assert.equal(s.type, 'other');
   assert.equal(s.needsDescription, false);
 });
 
@@ -36,7 +34,6 @@ test('US-3.1 · describe forced after 30 minutes without a breakpoint', async (t
   await h.work(95);
   assert.equal(h.manager.getMachine().state, 'describePending');
   mockVscode.queueInputBox('forced');
-  mockVscode.queueQuickPick('other');
   await h.tick(30_000); // force timer
   await h.flush();
   const s = h.manager.getSession()!;
@@ -67,7 +64,6 @@ test('US-3.2 · text-first describe with pre-fill; Enter saves', async (t) => {
   await h.edit('/ws/src/api.ts');
   await h.work(95);
   mockVscode.queueInputBox('implementing auth');
-  mockVscode.queueQuickPick('other');
   h.debugEnd();
   await h.flush();
   const inputCall = mockVscode.promptCalls().find((c) => c.kind === 'inputBox' && c.title === 'What are you working on?');
@@ -90,23 +86,6 @@ test('US-3.2 · empty text falls back to the non-text quick pick', async (t) => 
   assert.equal(s.needsDescription, true);
 });
 
-test('US-3.3 · task type picker defaults to other (Enter accepts)', async (t) => {
-  const h = setupHarness(t);
-  await h.start();
-  await h.work(95);
-  mockVscode.queueInputBox('refactoring');
-  h.debugEnd();
-  await h.flush();
-  const typeCall = mockVscode.promptCalls().find((c) => c.kind === 'quickPick' && c.title === 'Task type?');
-  assert.ok(typeCall);
-  const labels = typeCall.items.map((i) => i.label);
-  for (const ty of ['feature', 'bugfix', 'research', 'refactor', 'review', 'docs', 'ops', 'other']) {
-    assert.ok(labels.includes(ty), `offers ${ty}`);
-  }
-  const s = h.manager.getSession()!;
-  assert.equal(s.type, 'other', 'Enter accepts the default');
-});
-
 test('US-3.4 · same-as-last offered and fills the session', async (t) => {
   const h = setupHarness(t);
   await h.start();
@@ -118,7 +97,6 @@ test('US-3.4 · same-as-last offered and fills the session', async (t) => {
   await h.flush();
   const s = h.manager.getSession()!;
   assert.equal(s.description, 'previous work');
-  assert.equal(s.type, 'other');
 });
 
 test('US-3.5 · background work: anonymous, no more prompts, clears on describe', async (t) => {
@@ -138,7 +116,6 @@ test('US-3.5 · background work: anonymous, no more prompts, clears on describe'
   const describeCalls = mockVscode.promptCalls().filter((c) => c.kind === 'inputBox' && c.title === 'What are you working on?');
   assert.equal(describeCalls.length, 1, 'no further describe prompts for background work');
   mockVscode.queueInputBox('real description');
-  mockVscode.queueQuickPick('feature');
   h.manager.presentDescribeNow();
   await h.flush();
   assert.equal(s.anonymous, false);
@@ -151,7 +128,6 @@ test('US-3.1 · answering re-arms the describe interval from the response moment
   await h.start();
   await h.work(95);
   mockVscode.queueInputBox('first answer');
-  mockVscode.queueQuickPick('other');
   h.debugEnd();
   await h.flush();
   assert.equal(h.manager.getSession()!.description, 'first answer');
@@ -175,7 +151,6 @@ test('US-3.1 · answering re-arms the describe interval from the response moment
   // Only after a full describe interval of new active work does it come back —
   // exactly once, whether the force timer or a breakpoint delivers it.
   mockVscode.queueInputBox('second answer');
-  mockVscode.queueQuickPick('other');
   await h.work(96);
   assert.equal(asked(), 2, 'a fresh interval asks exactly once more');
   assert.equal(h.manager.getSession()!.description, 'second answer');
@@ -208,7 +183,6 @@ test('US-3.7 · a skipped wrap prompt does not re-ask on the next breakpoint', a
   await h.start();
   await h.work(95);
   mockVscode.queueInputBox('long session');
-  mockVscode.queueQuickPick('other');
   h.debugEnd();
   await h.flush();
   await h.driveToWrap();
@@ -250,7 +224,6 @@ test('US-3.7 · wrap prompt at 3.5h offers wrap-new/extend/add-description/skip'
   await h.start();
   await h.work(95);
   mockVscode.queueInputBox('long session');
-  mockVscode.queueQuickPick('other');
   h.debugEnd();
   await h.flush();
   await h.driveToWrap();
@@ -276,7 +249,6 @@ test('US-3.8 · extend grants a grace period and re-prompts', async (t) => {
   await h.start();
   await h.work(95);
   mockVscode.queueInputBox('long session');
-  mockVscode.queueQuickPick('other');
   h.debugEnd();
   await h.flush();
   await h.driveToWrap();
@@ -297,7 +269,6 @@ test('US-3.8 · maxGraceExtensions free extends then a description is required',
   await h.start();
   await h.work(95);
   mockVscode.queueInputBox('long session');
-  mockVscode.queueQuickPick('other');
   h.debugEnd();
   await h.flush();
   await h.driveToWrap();
@@ -312,7 +283,6 @@ test('US-3.8 · maxGraceExtensions free extends then a description is required',
   await h.flush();
   mockVscode.queueQuickPick('extend');
   mockVscode.queueInputBox('final description');
-  mockVscode.queueQuickPick('other');
   await h.tick(60_000);
   await h.flush();
   const s = h.manager.getSession()!;
@@ -357,12 +327,10 @@ test('US-3.11 · describe-now opens the flow immediately', async (t) => {
   await h.start();
   await h.edit();
   mockVscode.queueInputBox('now description');
-  mockVscode.queueQuickPick('feature');
   h.manager.presentDescribeNow();
   await h.flush();
   const s = h.manager.getSession()!;
   assert.equal(s.description, 'now description');
-  assert.equal(s.type, 'feature');
 });
 
 test('US-3.12 · a dismissed describe prompt is not re-asked on later activity or timers', async (t) => {
@@ -431,7 +399,6 @@ test('US-3.14 · answering describe does not immediately trigger progress', asyn
   await h.start();
   await h.work(1);
   mockVscode.queueInputBox('fixing auth');
-  mockVscode.queueQuickPick('other');
   h.debugEnd();
   await h.flush();
   await h.work(5);
@@ -442,3 +409,4 @@ test('US-3.14 · answering describe does not immediately trigger progress', asyn
     mockVscode.promptCalls().filter((c) => c.title?.startsWith('Progress update')).length;
   assert.equal(progress(), 0, 'a describe answer also services the progress checkpoint');
 });
+

@@ -119,7 +119,6 @@ test('US-6.3 · session-centric report lists totals and per-session detail', asy
   const now = Date.parse('2026-09-21T12:00:00');
   const s = sessionAt(rangeStart('today', now) + H, 45 * MIN, {
     workspaceName: 'my-project',
-    type: 'feature',
     description: 'Fix login',
     gitBranch: 'fix/login',
     commits: [{ hash: 'abc1234', subject: 'Fix login validation' }],
@@ -131,14 +130,13 @@ test('US-6.3 · session-centric report lists totals and per-session detail', asy
   assert.ok(content.includes('fix/login'));
   assert.ok(content.includes('Fix login validation'));
   assert.ok(content.includes('auth.ts'));
-  assert.ok(content.includes('feature'));
 });
 
 test('US-6.4 · custom range, project scope, hourly log, non-overwriting filenames', async () => {
   const now = Date.parse('2026-09-21T12:00:00');
   const start = rangeStart('today', now);
   const end = rangeEnd('today', now);
-  const s = sessionAt(start + H, 60 * MIN, { workspaceName: 'ws', type: 'ops' });
+  const s = sessionAt(start + H, 60 * MIN, { workspaceName: 'ws' });
   const proj = { id: 'p1', name: 'Client A', color: '#409cd4', workspaceKeys: ['ws1'], pathHints: [], createdAt: 0 };
   const content = await generateReport([s], [proj], 'custom', { custom: { start, end } }, now, 15 * MIN);
   assert.ok(content.includes('Hourly log'));

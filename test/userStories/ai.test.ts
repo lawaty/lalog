@@ -16,13 +16,14 @@ function makeSession(): Session {
     startedAt: Date.parse('2026-09-03T10:00:00'),
     lastActivityAt: Date.now(),
     activeMinutes: 75 * 60 * 1000,
-    type: 'feature',
     description: 'building auth',
     notes: [],
     needsDescription: false,
-    events: { edits: 12, saves: 4, terminal: 2, fileops: 1, tasks: 1, debug: 1, topFiles: [{ path: '/x/a.ts', edits: 8, firstTouch: 0, lastTouch: 0 }] },
+    events: { edits: 12, saves: 4, terminal: 2, fileops: 1, tasks: 1, debug: 1, opencode: 0, topFiles: [{ path: '/x/a.ts', edits: 8, firstTouch: 0, lastTouch: 0 }] },
     gitBranch: 'feat/auth',
     commits: [{ hash: 'abc123', subject: 'Add login flow' }],
+    activeSpans: [],
+    activityTs: [],
   };
 }
 
@@ -30,12 +31,12 @@ test('US-9.1 · AI is off by default; no AI path invoked', async (t) => {
   const ext = await setupExtension(t);
   assert.equal(readAiConfig().enabled, false);
   mockVscode.queueInputBox('plain desc');
-  mockVscode.queueQuickPick('feature');
   await mockVscode.commands.executeCommand('lalog.describeNow');
   await flush();
-  const typeCall = mockVscode.promptCalls().find((c) => c.kind === 'quickPick' && c.title === 'Task type?');
-  assert.ok(typeCall);
-  assert.ok(!typeCall.items.some((i: any) => i.t === 'ai'), 'no Draft with AI option when disabled');
+  const describeInput = mockVscode.promptCalls().find((c) => c.kind === 'inputBox' && c.title === 'What are you working on?');
+  assert.ok(describeInput);
+  const quickPickCalls = mockVscode.promptCalls().filter((c) => c.kind === 'quickPick');
+  assert.ok(!quickPickCalls.some((c) => (c.items ?? []).some((i: any) => i.t === 'ai')), 'no Draft with AI option when disabled');
   await mockVscode.commands.executeCommand('lalog.analysis');
   await flush();
   assert.ok(mockVscode._infoMessages.some((m) => m.includes('AI analysis is disabled')));
@@ -46,7 +47,7 @@ test('US-9.2 · Draft with AI requires accept/edit before it is saved', async (t
   await h.start();
   await h.work(95);
   h.manager.setAiDraft(async () => 'AI draft text');
-  mockVscode.queueInputBox('my work');
+  mockVscode.queueInputBox('');
   mockVscode.queueQuickPick('ai');
   mockVscode.queueInputBox('edited draft');
   h.debugEnd();
@@ -56,7 +57,7 @@ test('US-9.2 · Draft with AI requires accept/edit before it is saved', async (t
   assert.equal(draftCall.value, 'AI draft text', 'draft pre-filled');
   const s = h.manager.getSession()!;
   assert.equal(s.description, 'edited draft');
-  assert.equal(s.type, 'other');
+  assert.ok(s.notes.some((n) => n.text === 'edited draft'));
 });
 
 test('US-9.2 · escaping the AI draft saves nothing', async (t) => {
@@ -64,7 +65,7 @@ test('US-9.2 · escaping the AI draft saves nothing', async (t) => {
   await h.start();
   await h.work(95);
   h.manager.setAiDraft(async () => 'AI draft text');
-  mockVscode.queueInputBox('my work');
+  mockVscode.queueInputBox('');
   mockVscode.queueQuickPick('ai');
   mockVscode.queueInputBox(undefined);
   h.debugEnd();

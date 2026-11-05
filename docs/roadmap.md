@@ -147,7 +147,7 @@ These are **not planned** but could be considered if there's demand:
 
 - **Session splitting** — manually split a long session into two
 - **Session merging** — manually merge two related sessions
-- **Session tags** — user-defined tags beyond the fixed `SessionType` enum
+- **Session tags** — user-defined tags for sessions
 
 ### Integration
 

@@ -55,7 +55,6 @@ interface SessionSummary {
   projectId: string | null;
   projectName: string | null;
   projectColor: string | null;
-  type: string | null;
   closedReason: string | null;
   activeMinutes: number;
   lastActivityAt: number;
@@ -97,7 +96,6 @@ function summarize(s: Session, idleGapMs: number, projects: Project[]): SessionS
     projectId: proj?.id ?? null,
     projectName: proj?.name ?? null,
     projectColor: proj?.color ?? null,
-    type: s.type ?? null,
     closedReason: s.closedReason ?? null,
     activeMinutes: s.activeMinutes,
     lastActivityAt: s.lastActivityAt,

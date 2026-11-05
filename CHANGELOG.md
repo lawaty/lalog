@@ -14,6 +14,26 @@ behind a design choice, see [`docs/decisions.md`](docs/decisions.md).
 
 ## [Unreleased]
 
+## [0.7.10] - 2026-11-05
+
+### Fixed
+
+- **The describe prompt no longer discards typed text.** Dismissing the task-type
+  picker used to throw away what you had typed; the text is now saved directly as
+  the session description and an update note.
+
+### Removed
+
+- **The session "task type" concept.** The `SessionType` enum, the `Session.type`
+  field, the "Task type?" picker, and the "Task types" PDF/CSV export option are
+  gone.
+
+### Changed
+
+- **Describe prompts now save immediately on Enter.** Empty input still offers
+  Same as last / AI draft / background / Later.
+- **Session detail, reports, panel summary, and redaction no longer show a type.**
+
 ## [0.7.9] - 2026-11-02
 
 ### Fixed

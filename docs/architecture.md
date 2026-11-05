@@ -380,11 +380,7 @@ sequenceDiagram
         Note over User: Options: (same as last),<br/>Draft with AI,<br/>Keep as background work, Later
         User-->>DF: reuse draft / background / later
     else Text entered
-        DF->>User: QuickPick: "Task type?"
-        Note over User: Options: feature, bugfix,<br/>research, refactor, review,<br/>docs, ops, other,<br/>Draft with AI, Later
-        Note over DF: "other" pre-selected — Enter accepts it
-        User-->>DF: type (or override)
-        DF-->>PC: { choice: 'described', type, text }
+        DF-->>PC: { choice: 'described', text }
     end
 
     alt "Later"

@@ -64,7 +64,6 @@ test('US-4.2 · quick actions map to commands', async (t) => {
   // Describe
   mockVscode.queueQuickPick('describe');
   mockVscode.queueInputBox('quick desc');
-  mockVscode.queueQuickPick('feature');
   await mockVscode.commands.executeCommand('lalog.statusAction');
   await flush();
   assert.equal(store.loadActive(wsKey)!.description, 'quick desc');
@@ -166,13 +165,12 @@ test('US-4.3 · a 23:30 session files under its local day everywhere', async (t)
   );
 });
 
-test('US-4.4 · session detail includes split, type, reason, events, files, notes, git', async (t) => {
+test('US-4.4 · session detail includes split, reason, events, files, notes, git', async (t) => {
   const h = setupHarness(t);
   await h.start();
   await h.work(40); // long enough that the close is actually recorded
   const s = h.manager.getSession()!;
   s.description = 'drill down';
-  s.type = 'feature';
   s.gitBranch = 'main';
   s.commits = [{ hash: 'abc1234', subject: 'Add thing' }];
   s.notes.push({ at: Date.now(), text: 'a note' });
@@ -182,7 +180,6 @@ test('US-4.4 · session detail includes split, type, reason, events, files, note
   const state = lastState();
   const summary = state.groups[0].sessions[0];
   assert.equal(summary.description, 'drill down');
-  assert.equal(summary.type, 'feature');
   assert.equal(summary.closedReason, 'user');
   assert.equal(summary.gitBranch, 'main');
   assert.equal(summary.commits.length, 1);
@@ -228,7 +225,6 @@ test('US-4.5 · Now box data and buttons', async (t) => {
     await flush();
   }
   mockVscode.queueInputBox('now box');
-  mockVscode.queueQuickPick('feature');
   await mockVscode.commands.executeCommand('lalog.describeNow');
   await flush();
   const state = lastState();

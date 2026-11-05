@@ -180,7 +180,6 @@ export function createHarness(
           h.manager.getMachine().activeMinutes < h.th.wrapAt
         ) {
           mockVscode.queueInputBox(`desc ${i}`);
-          mockVscode.queueQuickPick('other');
           h.debugEnd();
           await h.flush();
         }

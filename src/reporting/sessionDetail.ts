@@ -198,7 +198,7 @@ export function renderDayDiffs(d: DayDiffsInput): string {
 
 function summaryLine(s: Session, project: Project | null): string {
   const ended = s.endedAt ? `ended ${fmtHM(s.endedAt)}` : '*still open*';
-  return `> ${project ? project.name : '*(no project)*'} · started ${fmtHM(s.startedAt)} · ${ended} · ${s.type ?? '*untagged*'} · closed: ${s.closedReason ?? '*still open*'}`;
+  return `> ${project ? project.name : '*(no project)*'} · started ${fmtHM(s.startedAt)} · ${ended} · closed: ${s.closedReason ?? '*still open*'}`;
 }
 
 function countersLine(s: Session): string {

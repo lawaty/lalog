@@ -242,7 +242,7 @@ Each note stores `{ at: <epoch ms>, text }`. Skipping a progress prompt (Esc) re
 Closed sessions are appended to `~/.lalog/sessions.jsonl`:
 
 ```jsonl
-{"id":"20260903-2200-a1b2-c3d4","workspaceKey":"abc1234567","workspaceName":"my-project","startedAt":1725397200000,"endedAt":1725404400000,"lastActivityAt":1725404400000,"activeMinutes":5700000,"activeSpans":[{"start":1725397200000,"end":1725400800000}],"activityTs":[1725397200000,1725397800000,1725400200000,1725400800000],"type":"feature","description":"Fix login bug","notes":[{"at":1725400800000,"text":"wired up the fix"}],"needsDescription":false,"events":{"edits":142,"saves":23,"terminal":8,"fileops":11,"tasks":3,"debug":2,"opencode":0,"topFiles":[...]},"gitBranch":"fix/login","commits":[{"hash":"a1b2c3d","subject":"Fix login validation"}],"closedReason":"user"}
+{"id":"20260903-2200-a1b2-c3d4","workspaceKey":"abc1234567","workspaceName":"my-project","startedAt":1725397200000,"endedAt":1725404400000,"lastActivityAt":1725404400000,"activeMinutes":5700000,"activeSpans":[{"start":1725397200000,"end":1725400800000}],"activityTs":[1725397200000,1725397800000,1725400200000,1725400800000],"description":"Fix login bug","notes":[{"at":1725400800000,"text":"wired up the fix"}],"needsDescription":false,"events":{"edits":142,"saves":23,"terminal":8,"fileops":11,"tasks":3,"debug":2,"opencode":0,"topFiles":[...]},"gitBranch":"fix/login","commits":[{"hash":"a1b2c3d","subject":"Fix login validation"}],"closedReason":"user"}
 ```
 
 - **Append-only** — no read-modify-write for normal operation
@@ -474,7 +474,7 @@ Sessions started: 2026-09-01, 2026-09-02, 2026-09-03
 3. **Preset** — `personal` (full detail) or `client` (minimal abstract sheet).
 4. **Details** — a multi-select checkbox list, pre-ticked from the chosen preset. The tick state overrides the preset for that run.
 
-**Checkbox items (14)** — Summary totals, Per-day totals, Time ranges, Descriptions, Task types, Projects, Workspaces, Top files, Git activity, Notes, Inside/outside split, Event counters, Hourly log, and "Start each day on a new page".
+**Checkbox items (13)** — Summary totals, Per-day totals, Time ranges, Descriptions, Projects, Workspaces, Top files, Git activity, Notes, Inside/outside split, Event counters, Hourly log, and "Start each day on a new page".
 
 **Day mode**: `grouped` (default for `personal`) lays out one section per day, flowing continuously down the pages. `separate` (default for `client`) starts every day on a fresh page. Session durations always render — a time report without durations is useless.
 
@@ -482,7 +482,7 @@ Sessions started: 2026-09-01, 2026-09-02, 2026-09-03
 
 | Preset | Includes | Day mode |
 |--------|----------|----------|
-| `personal` | everything: totals, time ranges, descriptions, task types, projects, workspaces, top files, git, notes, in/outside split, event counters, hourly log | grouped |
+| `personal` | everything: totals, time ranges, descriptions, projects, workspaces, top files, git, notes, in/outside split, event counters, hourly log | grouped |
 | `client` | day headings, time ranges, descriptions, projects, and durations only | separate |
 
 **Output**: `~/.lalog/reports/<date>-<range>[-<project-slug>][-N].pdf` with the same non-overwriting naming as markdown reports, then opened with the system PDF viewer via `vscode.env.openExternal`. Cancelling any prompt writes nothing; an empty checkbox list is not a cancel — it renders a bare document (day headings and durations only).

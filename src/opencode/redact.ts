@@ -20,7 +20,6 @@ export function sessionSnapshot(s: Session, sendCommitSubjects: boolean): string
     `Active: ${Math.round(s.activeMinutes / 60000)} min (started ${new Date(s.startedAt).toLocaleString()})`
   );
   parts.push(`Edits: ${s.events.edits}, Saves: ${s.events.saves}, Terminal actions: ${s.events.terminal}`);
-  if (s.type) parts.push(`Type: ${s.type}`);
   if (s.description) parts.push(`Description: ${s.description}`);
   if (s.gitBranch) parts.push(`Git branch: ${s.gitBranch}`);
   const files = s.events.topFiles.slice(0, MAX_FILES).map((f) => f.path);

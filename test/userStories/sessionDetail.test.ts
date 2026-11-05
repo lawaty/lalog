@@ -53,7 +53,6 @@ test('US-4.4 · session detail renders every section', () => {
   const start = new Date(2026, 8, 21, 9, 0).getTime();
   const s = sessionAt(start, {
     description: 'Fix login',
-    type: 'bugfix',
     closedReason: 'user',
     gitBranch: 'fix/login',
     commits: [{ hash: 'abc1234', subject: 'Validate tokens' }],
@@ -109,7 +108,7 @@ test('US-4.4 · session detail renders every section', () => {
   });
 
   assert.ok(md.startsWith('# Session detail — my-project'), 'title names the workspace');
-  assert.ok(md.includes('> *(no project)* · started 09:00 · ended 09:30 · bugfix · closed: user'), 'summary line');
+  assert.ok(md.includes('> *(no project)* · started 09:00 · ended 09:30 · closed: user'), 'summary line');
   assert.ok(md.includes('**Active 30m — in VS Code 10m · outside VS Code 10m**'), 'activity split');
   assert.ok(md.includes('## Description\n\nFix login'));
   assert.ok(md.includes('- 09:10 — first update'), 'updates are timestamped');

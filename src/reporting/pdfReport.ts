@@ -24,7 +24,6 @@ export const PDF_TOGGLE_KEYS: PdfToggleKey[] = [
   'includeDayTotals',
   'includeTimeRanges',
   'includeDescriptions',
-  'includeTaskTypes',
   'includeProjects',
   'includeWorkspaces',
   'includeTopFiles',
@@ -43,7 +42,6 @@ export interface PdfOptions {
   includeDayTotals: boolean;
   includeTimeRanges: boolean; // "09:00-10:30" prefix on rows
   includeDescriptions: boolean;
-  includeTaskTypes: boolean;
   includeProjects: boolean;
   includeWorkspaces: boolean;
   includeTopFiles: boolean;
@@ -61,7 +59,6 @@ const PERSONAL: PdfOptions = {
   includeDayTotals: true,
   includeTimeRanges: true,
   includeDescriptions: true,
-  includeTaskTypes: true,
   includeProjects: true,
   includeWorkspaces: true,
   includeTopFiles: true,
@@ -79,7 +76,6 @@ const CLIENT: PdfOptions = {
   includeDayTotals: true,
   includeTimeRanges: true,
   includeDescriptions: true,
-  includeTaskTypes: false,
   includeProjects: true,
   includeWorkspaces: false,
   includeTopFiles: false,
@@ -231,7 +227,6 @@ export function renderPdfReport(
       head.push(s.endedAt ? `${hm(s.startedAt)}-${hm(s.endedAt)}` : `${hm(s.startedAt)}-now`);
     }
     head.push(fmtDuration(effectiveMs(s, now, idleGapMs)));
-    if (options.includeTaskTypes && s.type) head.push(s.type);
     if (options.includeProjects) head.push(resolveProjectName(s, projects));
     if (options.includeWorkspaces) head.push(s.workspaceName);
     doc.text(head.join(' · '), { x: left, size: 10, font: 'Helvetica-Bold', maxWidth: doc.contentWidth });

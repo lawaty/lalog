@@ -664,7 +664,6 @@ export class SessionManager implements vscode.Disposable {
     this.lastProgressActiveMin = this.machine.activeMinutes;
     if (result.choice === 'described') {
       const text = result.text.trim();
-      s.type = result.type;
       s.description = text;
       s.anonymous = false;
       s.needsDescription = false;
